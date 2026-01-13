@@ -725,6 +725,24 @@ func getPlayerNewUnlockedBadgeIds(playerUuid string, playerRank int, playerTags 
 	return badgeIds, nil
 }
 
+func ConditionSetup(condition *Condition, filename string) {
+	conditionId := filename[:len(filename)-5]
+	condition.ConditionId = conditionId
+	if condition.VarId > 0 {
+		if condition.VarOp == "" {
+			condition.VarOp = "="
+		}
+	} else if len(condition.VarIds) != 0 {
+		if len(condition.VarOps) < len(condition.VarIds) {
+			for v := range condition.VarIds {
+				if v >= len(condition.VarOps) {
+					condition.VarOps = append(condition.VarOps, "=")
+				}
+			}
+		}
+	}
+}
+
 func setConditions() {
 	logUpdateTask("conditions")
 
@@ -755,23 +773,8 @@ func setConditions() {
 
 				err = json.Unmarshal(data, &condition)
 				if err == nil {
-					conditionId := conditionConfigFile.Name()[:len(conditionConfigFile.Name())-5]
-					condition.ConditionId = conditionId
-					if condition.VarId > 0 {
-						if condition.VarOp == "" {
-							condition.VarOp = "="
-						}
-					} else if len(condition.VarIds) != 0 {
-						if len(condition.VarOps) < len(condition.VarIds) {
-							for v := range condition.VarIds {
-								if v >= len(condition.VarOps) {
-									condition.VarOps = append(condition.VarOps, "=")
-								}
-							}
-						}
-					}
-
-					conditionConfig[gameId][conditionId] = &condition
+					ConditionSetup(&condition, conditionConfigFile.Name())
+					conditionConfig[gameId][condition.ConditionId] = &condition
 				}
 			}
 		}

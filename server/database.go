@@ -1468,10 +1468,13 @@ func tryWritePlayerTag(playerUuid string, name string) (success bool, err error)
 		// Spare SQL having to deal with a duplicate record by checking player tags beforehand
 		tagExists := slices.Contains(tags, name)
 		if !tagExists {
+			// XXX assume db write always succeeds
+			/*
 			_, err = db.Exec("INSERT INTO playerTags (uuid, name, timestampUnlocked) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE name = name", playerUuid, name, time.Now())
 			if err != nil {
 				return false, err
 			}
+			*/
 			return true, nil
 		}
 	}

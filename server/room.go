@@ -42,6 +42,14 @@ type Room struct {
 	minigames  []*Minigame
 }
 
+func NewRoom(id int, singleplayer bool, conditions []*Condition) *Room {
+	return &Room{
+		id: id,
+		singleplayer: singleplayer,
+		conditions: conditions,
+	}
+}
+
 func createRooms(roomIds []int, spRooms []int) {
 	logInitTask("rooms")
 
@@ -98,11 +106,7 @@ func joinRoomWs(conn *websocket.Conn, ip string, token string, roomId int) {
 		uuid, _, _ = getOrCreatePlayerData(ip)
 	}
 
-	client := &RoomClient{
-		conn:   conn,
-		outbox: make(chan []byte, 256),
-		key:    serverSecurity.NewClientKey(),
-	}
+	client := NewRoomClient(conn)
 
 	if session, ok := clients.Load(uuid); ok {
 		if session.roomC != nil {
@@ -151,6 +155,52 @@ func joinRoomWs(conn *websocket.Conn, ip string, token string, roomId int) {
 	}
 
 	writeLog(client.session.uuid, client.mapId, "connect", 200)
+}
+
+func NewRoomClient(conn *websocket.Conn) *RoomClient {
+	return &RoomClient{
+		conn:   conn,
+		outbox: make(chan []byte, 256),
+		key:    serverSecurity.NewClientKey(),
+	}
+}
+
+func (c *RoomClient) JoinRoom(room *Room) {
+	if c.session == nil {
+		// very janky and improper session client setup; just enough for badges to sort of work
+		c.session = &SessionClient{account: true, roomC: c}
+		clients.StoreAndSetId(c.session.uuid, c.session)
+	}
+	c.joinRoom(room)
+}
+
+func (c *RoomClient) SendSessionMsg(msg []string) error {
+	amsg := make([]any, 0, len(msg))
+	for _, s := range msg {
+		amsg = append(amsg, s)
+	}
+	return c.session.processMsg(buildMsg(amsg...))
+}
+
+func (c *RoomClient) SendMsg(msg []string) error {
+	amsg := make([]any, 0, len(msg))
+	for _, s := range msg {
+		amsg = append(amsg, s)
+	}
+	return c.processMsg(string(buildMsg(amsg...)))
+}
+
+func (c *RoomClient) RecvMsg() ([]string, error) {
+	msg, ok := <-c.outbox
+	if ok {
+		return strings.Split(string(msg), delim), nil
+	}
+	return nil, errors.New("no message received")
+}
+
+func TestInit() {
+	config = &Config{}
+	assets = &Assets{}
 }
 
 func (c *RoomClient) joinRoom(room *Room) {
