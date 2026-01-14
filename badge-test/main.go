@@ -7,7 +7,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ynoproject/ynoserver/server"
@@ -108,7 +107,7 @@ func packetsForVars(c *server.Condition, varIds []int, varOps []string, varValue
 	return packets
 }
 
-func sessionForCondition(c server.Condition) Session {
+func sessionForCondition(c server.Condition, extra condExtra) Session {
 	s := Session{}
 	if c.Disabled {
 		return s
@@ -205,14 +204,46 @@ func sessionForCondition(c server.Condition) Session {
 		s.Packets = append(s.Packets, varPackets...)
 	}
 
+	if c.TimeTrial && extra.TimeTrialSecs > 0 {
+		s.Packets = append(s.Packets, packetsForTimeTrial(c.Map, extra.TimeTrialSecs)...)
+	}
+
 	s.Packets = append(s.Packets, Packet{IsServer: true, Data: []string{"b"}})
 	return s
 }
 
-func runCondSession(cond server.Condition) {
-	s := sessionForCondition(cond)
+func packetsForTimeTrial(mapid, secs int) []Packet {
+	var packets []Packet
+	packets = append(packets, Packet{
+		IsServer: true,
+		Data:     []string{"ss", "1430", "0"},
+	})
+	packets = append(packets, Packet{
+		Data: []string{"ss", "1430", "1"},
+	})
+	packets = append(packets, Packet{
+		IsServer: true,
+		Data:     []string{"sv", "88", "0"},
+	})
+	packets = append(packets, Packet{
+		Data: []string{"sv", "88", strconv.Itoa(secs - 1)},
+	})
+	packets = append(packets, Packet{
+		IsServer:  true,
+		IsSession: true,
+		Data:      []string{"ttr", strconv.Itoa(mapid), strconv.Itoa(secs - 1)},
+	})
+	return packets
+}
+
+type condExtra struct {
+	TimeTrialSecs int
+}
+
+func runCondSession(cond server.Condition, extra condExtra) {
+	s := sessionForCondition(cond, extra)
 	r := server.RoomById(s.RoomID)
-	c := server.NewRoomClient(nil)
+	c := server.NewRoomClient(nil, server.NewSessionClient())
 	msgs := make(chan []string, 128)
 	go func() {
 		for {
@@ -221,6 +252,16 @@ func runCondSession(cond server.Condition) {
 				panic(err)
 			}
 			msgs <- sp
+		}
+	}()
+	smsgs := make(chan []string, 128)
+	go func() {
+		for {
+			sp, err := c.RecvSessionMsg()
+			if err != nil {
+				panic(err)
+			}
+			smsgs <- sp
 		}
 	}()
 	c.JoinRoom(r)
@@ -232,11 +273,17 @@ func runCondSession(cond server.Condition) {
 
 	for _, p := range s.Packets {
 		if p.IsServer {
+			mch := msgs
+			sn := "room"
+			if p.IsSession {
+				mch = smsgs
+				sn = "sess"
+			}
 		servLoop:
 			for {
 				select {
-				case sp := <-msgs:
-					log.Printf("\tgot %#v", sp)
+				case sp := <-mch:
+					log.Printf("\tgot %s %#v", sn, sp)
 					if slices.Equal(sp, p.Data) {
 						break servLoop
 					} else {
@@ -270,19 +317,40 @@ func main() {
 	// TODO: loop over all games? make sure to reset data between iterations (room and global conditions especially)
 	// TODO: add function for single-condition mode like the one before this commit, it is still useful
 	// (also I'm not even sure if non-isolated tests are gonna be non-jank enough to work as the "main" way of regression testing)
-	for game /*, gameBadges*/ := range server.Badges() {
-		conds := server.Conditions()[game]
+	for game, gameBadges := range server.Badges() {
 		server.SetGameName(game)
-		// TODO: for time trial conditions get times from badge data
-		//for _, badges := range gameBadges {
-		// TODO: if we want to reference conds from rooms (why?) we'd need globalConditions access as well
-		for cid, cond := range conds {
-			if game == "2kki" && (cid == "abandoned_factory_garden" || strings.HasPrefix(cid, "tt_") || strings.HasSuffix(cid, "_tt") || strings.HasSuffix(cid, "_trial")) {
-				log.Println("FIXME: skipping unsuported time trial condition", cid)
-				continue
+		for bid, badge := range gameBadges {
+			var tags []string
+			if badge.ReqString != "" {
+				tags = append(tags, badge.ReqString)
 			}
-			log.Println(cid)
-			runCondSession(*cond)
+			if len(badge.ReqStrings) > 0 {
+				tags = append(tags, badge.ReqStrings...)
+			}
+			for _, rsa := range badge.ReqStringArrays {
+				tags = append(tags, rsa...)
+			}
+
+			var extra condExtra
+			if badge.ReqType == "timeTrial" {
+				extra.TimeTrialSecs = badge.ReqInt
+				conds := server.Conditions()[game]
+
+				// time trial conds are not directly referenced in the badge file
+				for cid, cond := range conds {
+					if cond.Map == badge.Map && cond.TimeTrial {
+						tags = append(tags, cid)
+					}
+				}
+			}
+			// TODO: minigame scores
+
+			_ = bid
+			for _, cid := range tags {
+				cond := server.Conditions()[game][cid]
+				log.Println(cid)
+				runCondSession(*cond, extra)
+			}
 		}
 	}
 }

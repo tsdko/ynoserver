@@ -110,7 +110,7 @@ func joinRoomWs(conn *websocket.Conn, ip string, token string, roomId int) {
 		uuid, _, _ = getOrCreatePlayerData(ip)
 	}
 
-	client := NewRoomClient(conn)
+	client := NewRoomClient(conn, nil)
 
 	if session, ok := clients.Load(uuid); ok {
 		if session.roomC != nil {
@@ -161,20 +161,27 @@ func joinRoomWs(conn *websocket.Conn, ip string, token string, roomId int) {
 	writeLog(client.session.uuid, client.mapId, "connect", 200)
 }
 
-func NewRoomClient(conn *websocket.Conn) *RoomClient {
-	return &RoomClient{
+func NewRoomClient(conn *websocket.Conn, sess *SessionClient) *RoomClient {
+	r := &RoomClient{
 		conn:   conn,
 		outbox: make(chan []byte, 256),
 		key:    serverSecurity.NewClientKey(),
+		session: sess,
 	}
+	if sess != nil {
+		sess.roomC = r
+	}
+	return r
+}
+
+func NewSessionClient() *SessionClient {
+	// very janky and improper session client setup; just enough for badges to sort of work
+	c := &SessionClient{account: true, outbox: make(chan []byte, 8)}
+	clients.StoreAndSetId(c.uuid, c)
+	return c
 }
 
 func (c *RoomClient) JoinRoom(room *Room) {
-	if c.session == nil {
-		// very janky and improper session client setup; just enough for badges to sort of work
-		c.session = &SessionClient{account: true, roomC: c}
-		clients.StoreAndSetId(c.session.uuid, c.session)
-	}
 	c.joinRoom(room)
 }
 
@@ -192,6 +199,14 @@ func (c *RoomClient) SendMsg(msg []string) error {
 		amsg = append(amsg, s)
 	}
 	return c.processMsg(string(buildMsg(amsg...)))
+}
+
+func (c *RoomClient) RecvSessionMsg() ([]string, error) {
+	msg, ok := <-c.session.outbox
+	if ok {
+		return strings.Split(string(msg), delim), nil
+	}
+	return nil, errors.New("no message received")
 }
 
 func (c *RoomClient) RecvMsg() ([]string, error) {

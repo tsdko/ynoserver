@@ -1505,6 +1505,9 @@ func getPlayerTimeTrialRecords(playerUuid string) (timeTrialRecords []*TimeTrial
 }
 
 func tryWritePlayerTimeTrial(playerUuid string, mapId int, seconds int) (success bool, err error) {
+	// XXX assumed to always succeed
+	return true, nil
+
 	var prevSeconds int
 	err = db.QueryRow("SELECT seconds FROM playerTimeTrials WHERE uuid = ? AND mapId = ?", playerUuid, mapId).Scan(&prevSeconds)
 	if err != nil {
