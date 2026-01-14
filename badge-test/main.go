@@ -127,6 +127,8 @@ func sessionForCondition(c server.Condition) Session {
 
 	if c.Map != 0 {
 		s.RoomID = c.Map
+	}
+	if c.MapX1 != 0 || c.MapY1 != 0 || c.MapX2 != 0 || c.MapY2 != 0 {
 		x := 0
 		y := 0
 		if c.MapX1 >= 0 {
@@ -269,7 +271,7 @@ func main() {
 	// TODO: add function for single-condition mode like the one before this commit, it is still useful
 	// (also I'm not even sure if non-isolated tests are gonna be non-jank enough to work as the "main" way of regression testing)
 
-	for game, gameBadges := range server.Badges() {
+	for game /*, gameBadges*/ := range server.Badges() {
 		if game != "2kki" {
 			continue
 		}
@@ -282,12 +284,6 @@ func main() {
 			if game == "2kki" && (cid == "abandoned_factory_garden" || strings.HasPrefix(cid, "tt_") || strings.HasSuffix(cid, "_tt") || strings.HasSuffix(cid, "_trial")) {
 				log.Println("FIXME: skipping unsuported time trial condition", cid)
 				continue
-			}
-			if game == "2kki" && cid == "jester_mask_fake_ap" {
-				// missing map ID for some reason
-				// FIXME: this *does* trigger in the proper server despite the lack of map id
-				// it did apparently trigger in the single-condition mode as well
-				cond.Map = gameBadges["jester_mask_apartments"].Map
 			}
 			log.Println(cid)
 			runCondSession(*cond)
