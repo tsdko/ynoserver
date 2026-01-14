@@ -128,7 +128,7 @@ func sessionForCondition(c server.Condition) Session {
 	if c.Map != 0 {
 		s.RoomID = c.Map
 	}
-	if c.MapX1 != 0 || c.MapY1 != 0 || c.MapX2 != 0 || c.MapY2 != 0 {
+	if c.Trigger == "coords" || c.MapX1 != 0 || c.MapY1 != 0 || c.MapX2 != 0 || c.MapY2 != 0 {
 		x := 0
 		y := 0
 		if c.MapX1 >= 0 {
