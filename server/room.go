@@ -50,6 +50,10 @@ func NewRoom(id int, singleplayer bool, conditions []*Condition) *Room {
 	}
 }
 
+func RoomById(id int) *Room {
+	return rooms[id]
+}
+
 func createRooms(roomIds []int, spRooms []int) {
 	logInitTask("rooms")
 

@@ -85,8 +85,8 @@ func Start() {
 	serverSecurity = security.New()
 	assets = getAssets(config.gamePath)
 
-	setConditions()
-	setBadges()
+	setConditions(".")
+	setBadges(".")
 	setEventVms()
 	setWordFilter()
 

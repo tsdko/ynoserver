@@ -1,12 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	//"encoding/json"
+	//"path/filepath"
 	"log"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ynoproject/ynoserver/server"
@@ -206,69 +207,90 @@ func sessionForCondition(c server.Condition) Session {
 	return s
 }
 
+func runCondSession(cond server.Condition) {
+	s := sessionForCondition(cond)
+	r := server.RoomById(s.RoomID)
+	c := server.NewRoomClient(nil)
+	msgs := make(chan []string, 128)
+	go func() {
+		for {
+			sp, err := c.RecvMsg()
+			if err != nil {
+				panic(err)
+			}
+			msgs <- sp
+		}
+	}()
+	c.JoinRoom(r)
+
+	log.Printf("session: %#v", s)
+
+	firstSp := <-msgs
+	log.Println("\tgot initial packet", firstSp)
+
+	for _, p := range s.Packets {
+		if p.IsServer {
+		servLoop:
+			for {
+				select {
+				case sp := <-msgs:
+					log.Printf("\tgot %#v", sp)
+					if slices.Equal(sp, p.Data) {
+						break servLoop
+					} else {
+						continue servLoop
+					}
+				case <-time.After(time.Second * 5):
+					log.Fatal("timed out while waiting for server packet ", p.Data)
+				}
+			}
+
+		} else if p.IsSession {
+			c.SendSessionMsg(p.Data)
+			log.Printf("\tsess send %#v", p)
+		} else {
+			log.Printf("\troom send %#v", p)
+			c.SendMsg(p.Data)
+		}
+	}
+}
+
 func main() {
 	server.TestInit()
-	// TODO: test with all conditions loaded, all time trial thresholds loaded, game configs specified (needed for 2kki time trials)
-	for _, path := range os.Args[1:] {
-		rawJson, err := os.ReadFile(path)
-		if err != nil {
-			panic(err)
+	allRooms := make([]int, 0, 9999)
+	for id := range 9999 {
+		allRooms = append(allRooms, id)
+	}
+	// TODO: test with all time trial thresholds loaded
+	server.SetGameName("2kki")
+	server.LoadBadgeData(os.Args[1], allRooms)
+	// for osme reason we're not getting the right ocntitions right now
+	// TODO: loop over all games? make sure to reset data between iterations (room and global conditions especially)
+	// TODO: add function for single-condition mode like the one before this commit, it is still useful
+	// (also I'm not even sure if non-isolated tests are gonna be non-jank enough to work as the "main" way of regression testing)
+
+	for game, gameBadges := range server.Badges() {
+		if game != "2kki" {
+			continue
 		}
-		var cond server.Condition
-		err = json.Unmarshal(rawJson, &cond)
-		if err != nil {
-			panic(err)
-		}
-		server.ConditionSetup(&cond, filepath.Base(path))
-		log.Println(path)
-		s := sessionForCondition(cond)
-
-		// TODO: test with all conditions loaded (there might be differences in behavior)
-		// also TODO: load and test global (non-room-specific) conditions as well
-		r := server.NewRoom(s.RoomID, false, []*server.Condition{&cond})
-
-		c := server.NewRoomClient(nil)
-		msgs := make(chan []string, 128)
-		go func() {
-			for {
-				sp, err := c.RecvMsg()
-				if err != nil {
-					panic(err)
-				}
-				msgs <- sp
+		conds := server.Conditions()[game]
+		server.SetGameName(game)
+		// TODO: for time trial conditions get times from badge data
+		//for _, badges := range gameBadges {
+		// TODO: if we want to reference conds from rooms (why?) we'd need globalConditions access as well
+		for cid, cond := range conds {
+			if game == "2kki" && (cid == "abandoned_factory_garden" || strings.HasPrefix(cid, "tt_") || strings.HasSuffix(cid, "_tt") || strings.HasSuffix(cid, "_trial")) {
+				log.Println("FIXME: skipping unsuported time trial condition", cid)
+				continue
 			}
-		}()
-		c.JoinRoom(r)
-
-		log.Printf("session: %#v", s)
-
-		firstSp := <-msgs
-		log.Println("\tgot initial packet", firstSp)
-
-		for _, p := range s.Packets {
-			if p.IsServer {
-			servLoop:
-				for {
-					select {
-					case sp := <-msgs:
-						log.Printf("\tgot %#v", sp)
-						if slices.Equal(sp, p.Data) {
-							break servLoop
-						} else {
-							continue servLoop
-						}
-					case <-time.After(time.Second * 5):
-						log.Fatal("timed out while waiting for server packet ", p.Data)
-					}
-				}
-
-			} else if p.IsSession {
-				c.SendSessionMsg(p.Data)
-				log.Printf("\tsess send %#v", p)
-			} else {
-				log.Printf("\troom send %#v", p)
-				c.SendMsg(p.Data)
+			if game == "2kki" && cid == "jester_mask_fake_ap" {
+				// missing map ID for some reason
+				// FIXME: this *does* trigger in the proper server despite the lack of map id
+				// it did apparently trigger in the single-condition mode as well
+				cond.Map = gameBadges["jester_mask_apartments"].Map
 			}
+			log.Println(cid)
+			runCondSession(*cond)
 		}
 	}
 }

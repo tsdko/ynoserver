@@ -23,6 +23,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -208,17 +209,44 @@ type TimeTrialRecord struct {
 	Seconds int `json:"seconds"`
 }
 
+func LoadBadgeData(baseDir string, roomIds []int) {
+	setConditions(baseDir)
+	setBadges(baseDir)
+	globalConditions = getGlobalConditions()
+/*
+	if rooms == nil {
+		rooms = make(map[int]*Room)
+	}
+*/
+	for _, roomId := range roomIds {
+		room := rooms[roomId]
+		if room == nil {
+			room = NewRoom(roomId, false, getRoomConditions(roomId))
+			rooms[roomId] = room
+			continue
+		}
+		rooms[roomId].conditions = getRoomConditions(roomId)
+	}
+}
+
+func Badges() map[string]map[string]*Badge {
+	return badges
+}
+
+func Conditions() map[string]map[string]*Condition {
+	return conditions
+}
+
+func SetGameName(name string) {
+	config.gameName = name
+}
+
 func initBadges() {
 	setBadgeData()
 
 	scheduler.Every(1).Tuesday().At("20:00").Do(updateActiveBadgesAndConditions)
 	scheduler.Every(1).Friday().At("20:00").Do(func() {
-		setConditions()
-		setBadges()
-		globalConditions = getGlobalConditions()
-		for _, roomId := range assets.maps {
-			rooms[roomId].conditions = getRoomConditions(roomId)
-		}
+		LoadBadgeData(".", assets.maps)
 		setBadgeData()
 		updateActiveBadgesAndConditions()
 	})
@@ -743,12 +771,12 @@ func ConditionSetup(condition *Condition, filename string) {
 	}
 }
 
-func setConditions() {
+func setConditions(baseDir string) {
 	logUpdateTask("conditions")
 
 	conditionConfig := make(map[string]map[string]*Condition)
 
-	gameConditionDirs, err := os.ReadDir("badges/conditions/")
+	gameConditionDirs, err := os.ReadDir(filepath.Join(baseDir, "badges/conditions/"))
 	if err != nil {
 		return
 	}
@@ -757,7 +785,7 @@ func setConditions() {
 		if gameConditionsDir.IsDir() {
 			gameId := gameConditionsDir.Name()
 			conditionConfig[gameId] = make(map[string]*Condition)
-			configPath := "badges/conditions/" + gameId + "/"
+			configPath := filepath.Join(baseDir, "badges/conditions/"+gameId) + "/"
 			conditionConfigs, err := os.ReadDir(configPath)
 			if err != nil {
 				continue
@@ -783,13 +811,13 @@ func setConditions() {
 	conditions = conditionConfig
 }
 
-func setBadges() {
+func setBadges(baseDir string) {
 	logUpdateTask("badges")
 
 	badgeConfig := make(map[string]map[string]*Badge)
 	sortedBadgeIds = make(map[string][]string)
 
-	gameBadgeDirs, err := os.ReadDir("badges/data/")
+	gameBadgeDirs, err := os.ReadDir(filepath.Join(baseDir, "badges/data/"))
 	if err != nil {
 		return
 	}
@@ -799,7 +827,7 @@ func setBadges() {
 			gameId := gameBadgesDir.Name()
 			badgeConfig[gameId] = make(map[string]*Badge)
 			var badgeIds []string
-			configPath := "badges/data/" + gameId + "/"
+			configPath := filepath.Join(baseDir, "badges/data/"+gameId) + "/"
 			badgeConfigs, err := os.ReadDir(configPath)
 			if err != nil {
 				continue
