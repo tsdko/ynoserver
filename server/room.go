@@ -202,9 +202,9 @@ func (c *RoomClient) RecvMsg() ([]string, error) {
 	return nil, errors.New("no message received")
 }
 
-func TestInit() {
+func TestInit(mapIds []int) {
 	config = &Config{}
-	assets = &Assets{}
+	assets = &Assets{maps: mapIds}
 }
 
 func (c *RoomClient) joinRoom(room *Room) {

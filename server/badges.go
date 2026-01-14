@@ -209,16 +209,9 @@ type TimeTrialRecord struct {
 	Seconds int `json:"seconds"`
 }
 
-func LoadBadgeData(baseDir string, roomIds []int) {
-	setConditions(baseDir)
-	setBadges(baseDir)
+func initConditions() {
 	globalConditions = getGlobalConditions()
-/*
-	if rooms == nil {
-		rooms = make(map[int]*Room)
-	}
-*/
-	for _, roomId := range roomIds {
+	for _, roomId := range assets.maps {
 		room := rooms[roomId]
 		if room == nil {
 			room = NewRoom(roomId, false, getRoomConditions(roomId))
@@ -227,6 +220,12 @@ func LoadBadgeData(baseDir string, roomIds []int) {
 		}
 		rooms[roomId].conditions = getRoomConditions(roomId)
 	}
+}
+
+func LoadBadgeData(baseDir string) {
+	setConditions(baseDir)
+	setBadges(baseDir)
+	initConditions()
 }
 
 func Badges() map[string]map[string]*Badge {
@@ -239,6 +238,7 @@ func Conditions() map[string]map[string]*Condition {
 
 func SetGameName(name string) {
 	config.gameName = name
+	initConditions()
 }
 
 func initBadges() {
@@ -246,7 +246,7 @@ func initBadges() {
 
 	scheduler.Every(1).Tuesday().At("20:00").Do(updateActiveBadgesAndConditions)
 	scheduler.Every(1).Friday().At("20:00").Do(func() {
-		LoadBadgeData(".", assets.maps)
+		LoadBadgeData(".")
 		setBadgeData()
 		updateActiveBadgesAndConditions()
 	})

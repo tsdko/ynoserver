@@ -258,23 +258,19 @@ func runCondSession(cond server.Condition) {
 }
 
 func main() {
-	server.TestInit()
 	allRooms := make([]int, 0, 9999)
 	for id := range 9999 {
 		allRooms = append(allRooms, id)
 	}
+	server.TestInit(allRooms)
+
 	// TODO: test with all time trial thresholds loaded
-	server.SetGameName("2kki")
-	server.LoadBadgeData(os.Args[1], allRooms)
+	server.LoadBadgeData(os.Args[1])
 	// for osme reason we're not getting the right ocntitions right now
 	// TODO: loop over all games? make sure to reset data between iterations (room and global conditions especially)
 	// TODO: add function for single-condition mode like the one before this commit, it is still useful
 	// (also I'm not even sure if non-isolated tests are gonna be non-jank enough to work as the "main" way of regression testing)
-
 	for game /*, gameBadges*/ := range server.Badges() {
-		if game != "2kki" {
-			continue
-		}
 		conds := server.Conditions()[game]
 		server.SetGameName(game)
 		// TODO: for time trial conditions get times from badge data
