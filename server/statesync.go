@@ -1,11 +1,43 @@
-package main
+package server
 
 import (
 	"fmt"
 	"strconv"
-
-	"github.com/ynoproject/ynoserver/server"
 )
+
+//type SyncType int
+
+// keep in mind interfaces have allocation overhead (dynamic dispatch too but might not be that important here)
+// also having two different approaches to polymorphism in the same file smells a bit
+type SyncTarget interface {
+	FinishSync(c *RoomClient)
+}
+
+type MinigameSync struct { ID int }
+func (m MinigameSync) FinishSync(c *RoomClient) {
+	// TODO: implement
+}
+
+type TagSync struct { Name string }
+func (t TagSync) FinishSync(c *RoomClient) {
+	// TODO: implement
+}
+
+type VmSync struct { EventID int }
+func (v VmSync) FinishSync(c *RoomClient) {
+	// TODO: implement
+}
+
+type TimeTrialSync struct {}
+func (t TimeTrialSync) FinishSync(c *RoomClient) {
+	// TODO: implement
+}
+
+type Sync struct {
+	Target SyncTarget
+	Steps []Step
+	MinLevel int
+}
 
 type StepType int
 
@@ -25,6 +57,7 @@ type Step struct {
 	Ints    []int
 	Strings []string
 }
+// TODO: coords, switches, vars should be rechecked at the end of the chain to ensure they haven't changed between steps (this is already done in the existing prod implementation, not only at the end of the chain though)
 
 // idea: method accessors for actual type-dependent data
 // (honestly not sure if this is less or more efficient than type assertions or switches)
@@ -39,6 +72,7 @@ const (
 	GeVarOp
 	LeVarOp
 	BetweenVarOp
+	TrueVarOp
 )
 
 func NewStepVarOp(op string) StepVarOp {
@@ -57,6 +91,8 @@ func NewStepVarOp(op string) StepVarOp {
 		return GeVarOp
 	case ">=<":
 		return BetweenVarOp
+	case "true": // XXX
+		return TrueVarOp
 	default:
 		panic("unknown op " + op)
 	}
@@ -78,6 +114,8 @@ func (op StepVarOp) Exec(v, o1, o2 int) bool {
 		return v >= o1
 	case BetweenVarOp:
 		return v >= o1 && v < o2
+	case TrueVarOp:
+		return true
 	default:
 		panic("unknown op " + strconv.Itoa(int(op)))
 	}
@@ -117,8 +155,37 @@ func varSteps(trigger int, ids []int, ops []string, values []int) []Step {
 	return steps
 }
 
-func conditionSteps(c server.Condition) ([]Step, error) {
-	// TODO: similar thing for time trials
+func minigameSteps(minigame *Minigame) []Step {
+	// TODO elsewhere: for minigames current player highscores are retrieved on room join
+
+	triggerNum := 1
+	if minigame.InitialVarSync {
+		triggerNum = 2
+	}
+
+	// TODO: dev check for dev minigames
+
+	// ...var value for comparison retrieved later from var cache I guess
+	steps := varSteps(triggerNum, []int{minigame.VarId}, []string{"true"}, []int{0}) // XXX ugly
+	if minigame.SwitchId > 0 {
+		steps = append(steps, switchSteps(0, []int{minigame.SwitchId}, []bool{minigame.SwitchValue})...)
+	}
+	return steps
+}
+
+func timeTrialSteps(game string, secs int) []Step {
+	if game != "2kki" {
+		panic("unsupported game for time trial: " + game)
+	}
+
+	// TODO: if there are extra condition steps, they should be put before the time-trial-specific ones
+	steps := switchSteps(0, []int{1430}, []bool{true})
+	steps = append(steps, varSteps(0, []int{88}, []string{"true"}, []int{0})...) // XXX ugly
+	return steps
+}
+
+func conditionSteps(c Condition) ([]Step, error) {
+	// TODO: make sure we haven't missed condition fields/values that are unused in current condition files but implemented on the server
 
 	steps := make([]Step, 0)
 
