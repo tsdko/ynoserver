@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -10,32 +11,102 @@ import (
 // keep in mind interfaces have allocation overhead (dynamic dispatch too but might not be that important here)
 // also having two different approaches to polymorphism in the same file smells a bit
 type SyncTarget interface {
-	FinishSync(c *RoomClient)
+	FinishSync(c *RoomClient) error
 }
 
-type MinigameSync struct { ID int }
-func (m MinigameSync) FinishSync(c *RoomClient) {
-	// TODO: implement
+// todo: disconnectsync for e.g. the 2kki debug switch?
+// or maybe just make sync target a func pointer instead?
+
+type MinigameSync struct {
+	roomMinigameId int
+	minigame       *Minigame
 }
 
-type TagSync struct { Name string }
-func (t TagSync) FinishSync(c *RoomClient) {
-	// TODO: implement
+func (m MinigameSync) FinishSync(c *RoomClient) error {
+	if c.varCache[m.minigame.VarId] < c.minigameScores[m.roomMinigameId] {
+		return nil
+	}
+	_, err := tryWritePlayerMinigameScore(c.session.uuid, m.minigame.Id, c.varCache[m.minigame.VarId])
+	return err
 }
 
-type VmSync struct { EventID int }
-func (v VmSync) FinishSync(c *RoomClient) {
-	// TODO: implement
+type TagSync struct{ Name string }
+
+func (t TagSync) FinishSync(c *RoomClient) error {
+	// TODO (for all sync targets, not just here): recheck all steps with cached values once you reach the last step
+	success, err := tryWritePlayerTag(c.session.uuid, t.Name)
+	if err != nil {
+		return err
+	}
+	if success {
+		c.outbox <- buildMsg("b")
+	}
+	return nil
 }
 
-type TimeTrialSync struct {}
-func (t TimeTrialSync) FinishSync(c *RoomClient) {
+// XXX: this would have to be uninjected and reinjected on vending machine change, seems ugly
+type VmSync struct{}
+
+func (v VmSync) FinishSync(c *RoomClient) error {
 	// TODO: implement
+
+	// ideally we wouldn't have to do this but this would mean removing this from the room sync list on vending machine change; right now we don't even support modifying that set live (clients are supposed to hold separate slices of indices into that set)
+	if c.room.id != currentEventVmMapId {
+		return errors.New("event vm room id mismatch")
+	}
+
+	// expected to be tested prior to this via event steps
+	/*
+		eventIdInt, err := strconv.Atoi(msg[1])
+		if err != nil {
+			return err
+		}
+
+		if !slices.Contains(currentEventVmGroup, eventIdInt) {
+			return errors.New("event vm id mismatch")
+		}
+	*/
+
+	// XXX: we don't have access to the specific event id from here
+	/*
+		exp, err := tryCompleteEventVm(c.session.uuid, currentEventVmMapId, eventIdInt)
+		if err != nil {
+			return err
+		}
+		if exp > -1 {
+			c.session.outbox <- buildMsg("vm", exp)
+		}
+	*/
+	return errors.New("unimplemented")
+}
+
+type TimeTrialSync struct{ TimeVar int }
+
+func (t TimeTrialSync) FinishSync(c *RoomClient) error {
+	value := c.varCache[t.TimeVar]
+	if value >= 3600 {
+		return nil
+	}
+	if c.notifiedMaps == nil {
+		c.notifiedMaps = make(map[int]bool)
+	}
+	if !c.notifiedMaps[c.room.id] {
+		c.session.outbox <- buildMsg("ttr", c.room.id, value)
+		c.notifiedMaps[c.room.id] = true
+	}
+	success, err := tryWritePlayerTimeTrial(c.session.uuid, c.room.id, value)
+	if err != nil {
+		return err
+	}
+	if success {
+		c.outbox <- buildMsg("b")
+	}
+	return nil
 }
 
 type Sync struct {
-	Target SyncTarget
-	Steps []Step
+	Target   SyncTarget
+	Steps    []Step
 	MinLevel int
 }
 
@@ -57,6 +128,7 @@ type Step struct {
 	Ints    []int
 	Strings []string
 }
+
 // TODO: coords, switches, vars should be rechecked at the end of the chain to ensure they haven't changed between steps (this is already done in the existing prod implementation, not only at the end of the chain though)
 
 // idea: method accessors for actual type-dependent data
