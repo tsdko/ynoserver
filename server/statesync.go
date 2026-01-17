@@ -296,12 +296,16 @@ func conditionSteps(c Condition) ([]Step, error) {
 		steps = append(steps, Step{Type: t, Ints: rect})
 	}
 
+	// response sent only if the event runs without being triggered by the player
 	triggerNum := 0
 	switch c.Trigger {
 	case "eventAction":
+		// response sent only if the player interacts with the event
+		// right now this applies to any number above 1 as well
 		triggerNum = 1
 		fallthrough
 	case "event":
+		// TODO: current implementation skips this step if there's a vending machine exped in this room with the same event id
 		intValues := make([]int, 0, len(values)+1)
 		intValues = append(intValues, triggerNum)
 		for _, sv := range values {
@@ -327,10 +331,13 @@ func conditionSteps(c Condition) ([]Step, error) {
 	}
 	var switchInitTrigger int
 	if c.Trigger != "" || c.VarTrigger {
+		// response sent immediately
 		switchInitTrigger = 0
 	} else if c.SwitchDelay {
+		// response sent every time the switch is written to
 		switchInitTrigger = 1
 	} else {
+		// response sent immediately and then every time the switch is written to
 		switchInitTrigger = 2
 	}
 
@@ -344,10 +351,13 @@ func conditionSteps(c Condition) ([]Step, error) {
 	}
 	var varInitTrigger int
 	if c.Trigger != "" || (!c.VarTrigger && len(switchIds) > 0) {
+		// response sent immediately
 		varInitTrigger = 0
 	} else if c.VarDelay {
+		// response sent every time the var is written to
 		varInitTrigger = 1
 	} else {
+		// response sent immediately and then every time the var is written to
 		varInitTrigger = 2
 	}
 
