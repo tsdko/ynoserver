@@ -228,14 +228,6 @@ func LoadBadgeData(baseDir string) {
 	initConditions()
 }
 
-func Badges() map[string]map[string]*Badge {
-	return badges
-}
-
-func Conditions() map[string]map[string]*Condition {
-	return conditions
-}
-
 func SetGameName(name string) {
 	config.gameName = name
 	initConditions()

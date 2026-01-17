@@ -1,12 +1,16 @@
 package main
 
 import (
-	//"encoding/json"
-	//"path/filepath"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ynoproject/ynoserver/server"
@@ -304,22 +308,105 @@ func runCondSession(cond server.Condition, extra condExtra) {
 	}
 }
 
+func loadBadges(baseDir string) (games []string, badges [][]server.Badge, conds []map[string]server.Condition, err error) {
+	badgeGameDents, err := os.ReadDir(filepath.Join(baseDir, "badges", "data"))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	for _, d := range badgeGameDents {
+		if !d.IsDir() {
+			continue
+		}
+		games = append(games, d.Name())
+	}
+	slices.Sort(games)
+
+	badges = make([][]server.Badge, len(games))
+	conds = make([]map[string]server.Condition, len(games))
+	for gi, game := range games {
+		badgeDir := filepath.Join(baseDir, "badges", "data", game)
+		badgeDents, err := os.ReadDir(badgeDir)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		badgeNames := map[*server.Badge]string{}
+		for _, d := range badgeDents {
+			if d.IsDir() {
+				continue
+			}
+			bname := d.Name()
+			if !strings.HasSuffix(bname, ".json") {
+				continue
+			}
+
+			data, err := os.ReadFile(filepath.Join(badgeDir, bname))
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("%s: %w", bname, err)
+			}
+			var b server.Badge
+			if err := json.Unmarshal(data, &b); err != nil {
+				return nil, nil, nil, fmt.Errorf("%s: %w", bname, err)
+			}
+			badges[gi] = append(badges[gi], b)
+			badgeNames[&b] = bname
+		}
+		// for consistent test execution order
+		slices.SortFunc(badges[gi], func(a, b server.Badge) int {
+			return strings.Compare(badgeNames[&a], badgeNames[&b])
+		})
+
+		condDir := filepath.Join(baseDir, "badges", "conditions", game)
+		condDents, err := os.ReadDir(condDir)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				// game has no conditions
+				continue
+			}
+			return nil, nil, nil, err
+		}
+		conds[gi] = make(map[string]server.Condition)
+		for _, d := range condDents {
+			if d.IsDir() {
+				continue
+			}
+			cname := d.Name()
+			if !strings.HasSuffix(cname, ".json") {
+				continue
+			}
+
+			data, err := os.ReadFile(filepath.Join(condDir, cname))
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("%s: %w", cname, err)
+			}
+			var c server.Condition
+			if err := json.Unmarshal(data, &c); err != nil {
+				return nil, nil, nil, fmt.Errorf("%s: %w", cname, err)
+			}
+			server.ConditionSetup(&c, cname)
+			conds[gi][c.ConditionId] = c
+		}
+	}
+	return games, badges, conds, nil
+}
+
 func main() {
+	games, badges, conds, err := loadBadges(os.Args[1])
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	allRooms := make([]int, 0, 9999)
 	for id := range 9999 {
 		allRooms = append(allRooms, id)
 	}
 	server.TestInit(allRooms)
-
-	// TODO: test with all time trial thresholds loaded
 	server.LoadBadgeData(os.Args[1])
-	// for osme reason we're not getting the right ocntitions right now
-	// TODO: loop over all games? make sure to reset data between iterations (room and global conditions especially)
+
 	// TODO: add function for single-condition mode like the one before this commit, it is still useful
-	// (also I'm not even sure if non-isolated tests are gonna be non-jank enough to work as the "main" way of regression testing)
-	for game, gameBadges := range server.Badges() {
+	for gi, game := range games {
 		server.SetGameName(game)
-		for bid, badge := range gameBadges {
+		for _, badge := range badges[gi] {
 			var tags []string
 			if badge.ReqString != "" {
 				tags = append(tags, badge.ReqString)
@@ -334,10 +421,9 @@ func main() {
 			var extra condExtra
 			if badge.ReqType == "timeTrial" {
 				extra.TimeTrialSecs = badge.ReqInt
-				conds := server.Conditions()[game]
 
 				// time trial conds are not directly referenced in the badge file
-				for cid, cond := range conds {
+				for cid, cond := range conds[gi] {
 					if cond.Map == badge.Map && cond.TimeTrial {
 						tags = append(tags, cid)
 					}
@@ -345,11 +431,10 @@ func main() {
 			}
 			// TODO: minigame scores
 
-			_ = bid
 			for _, cid := range tags {
-				cond := server.Conditions()[game][cid]
+				cond := conds[gi][cid]
 				log.Println(cid)
-				runCondSession(*cond, extra)
+				runCondSession(cond, extra)
 			}
 		}
 	}
