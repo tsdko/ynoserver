@@ -23,6 +23,14 @@ type MinigameSync struct {
 }
 
 func (m MinigameSync) FinishSync(c *RoomClient) error {
+	if c.minigameScores[m.roomMinigameId] <= 0 {
+		score, err := getPlayerMinigameScore(c.session.uuid, m.minigame.Id)
+		if err != nil {
+			writeErrLog(c.session.uuid, c.mapId, "failed to read player minigame score for "+m.minigame.Id)
+		}
+		c.minigameScores[m.roomMinigameId] = score
+	}
+
 	if c.varCache[m.minigame.VarId] < c.minigameScores[m.roomMinigameId] {
 		return nil
 	}
@@ -121,12 +129,48 @@ const (
 	PictureStep
 	SwitchStep
 	VarStep
+	DoneStep
 )
 
 type Step struct {
 	Type    StepType
 	Ints    []int
 	Strings []string
+}
+
+func (s *Step) Msgs() [][]any {
+	switch s.Type {
+	case PrevMapStep:
+		return nil
+	case CoordsStep:
+		return nil
+	case TeleportStep:
+		return nil
+	case DoneStep:
+		return nil
+	case EventStep:
+		msgs := make([][]any, 0, len(s.Ints[1:]))
+		for _, evId := range s.Ints[1:] {
+			// sev eventId triggerType
+			msgs = append(msgs, []any{"sev", evId, s.Ints[0]})
+		}
+		return msgs
+	case PictureStep:
+		msgs := make([][]any, 0, len(s.Strings))
+		for _, picId := range s.Strings {
+			// sp picName
+			msgs = append(msgs, []any{"sp", picId})
+		}
+		return msgs
+	case SwitchStep:
+		// ss switchId triggerType
+		return [][]any{{"ss", s.Ints[1], s.Ints[0]}}
+	case VarStep:
+		// sv varId triggerType
+		return [][]any{{"sv", s.Ints[1], s.Ints[0]}}
+	default:
+		panic("unknown sync type " + strconv.Itoa(int(s.Type)))
+	}
 }
 
 // TODO: coords, switches, vars should be rechecked at the end of the chain to ensure they haven't changed between steps (this is already done in the existing prod implementation, not only at the end of the chain though)
@@ -216,9 +260,16 @@ func varSteps(trigger int, ids []int, ops []string, values []int) []Step {
 	steps := []Step{}
 
 	for i := range ids {
+		ints := []int{trigger, ids[i], int(NewStepVarOp(ops[i]))}
+		if len(ids) == 1 {
+			// single-variable conditions can operate on more than one operand
+			ints = append(ints, values...)
+		} else {
+			ints = append(ints, values[i])
+		}
 		steps = append(steps, Step{
 			Type: VarStep,
-			Ints: []int{trigger, ids[i], int(NewStepVarOp(ops[i])), values[i]},
+			Ints: ints,
 		})
 		// every step past the first one is always with trigger 0
 		trigger = 0
@@ -228,14 +279,10 @@ func varSteps(trigger int, ids []int, ops []string, values []int) []Step {
 }
 
 func minigameSteps(minigame *Minigame) []Step {
-	// TODO elsewhere: for minigames current player highscores are retrieved on room join
-
 	triggerNum := 1
 	if minigame.InitialVarSync {
 		triggerNum = 2
 	}
-
-	// TODO: dev check for dev minigames
 
 	// ...var value for comparison retrieved later from var cache I guess
 	steps := varSteps(triggerNum, []int{minigame.VarId}, []string{"true"}, []int{0}) // XXX ugly
@@ -285,9 +332,6 @@ func conditionSteps(c Condition) ([]Step, error) {
 		}
 	*/
 	if c.Trigger == "coords" || c.MapX1 != 0 || c.MapY1 != 0 || c.MapX2 != 0 || c.MapY2 != 0 {
-		// TODO: we should also set RoomClient.syncCoords for every joining client if we have any CoordsSteps (TeleportStep not needed, teleports are always sync-checked)
-		// (this causes a sync check to be performed on every move instead of on sync packets only)
-		// (should this be like a global property of the room / the game so we don't have to deep search every time?)
 		t := CoordsStep
 		if c.Trigger == "teleport" {
 			t = TeleportStep
@@ -347,7 +391,7 @@ func conditionSteps(c Condition) ([]Step, error) {
 	if len(varIds) == 0 && c.VarId != 0 {
 		varIds = []int{c.VarId}
 		varOps = []string{c.VarOp}
-		varValues = []int{c.VarValue}
+		varValues = []int{c.VarValue, c.VarValue2}
 	}
 	var varInitTrigger int
 	if c.Trigger != "" || (!c.VarTrigger && len(switchIds) > 0) {

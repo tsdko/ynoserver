@@ -1,6 +1,6 @@
 module github.com/ynoproject/ynoserver
 
-go 1.22
+go 1.23
 
 require (
 	github.com/Appboy/webpush-go v0.0.0-20221006204155-f206645c3cb7

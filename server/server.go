@@ -90,7 +90,7 @@ func Start() {
 	setEventVms()
 	setWordFilter()
 
-	globalConditions = getGlobalConditions()
+	globalSyncs = getGlobalSyncs()
 
 	createRooms(assets.maps, config.spRooms)
 

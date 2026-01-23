@@ -21,20 +21,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"iter"
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
 
 var (
-	globalConditions []*Condition
+	globalSyncs []*Sync
 
-	conditions             map[string]map[string]*Condition
+	conditionSyncs         map[string]map[string]*ConditionSync
 	badges                 map[string]map[string]*Badge
 	badgeUnlockPercentages map[string]float32
 	sortedBadgeIds         map[string][]string
@@ -43,6 +42,12 @@ var (
 const (
 	maxPresets = 3
 )
+
+type ConditionSync struct {
+	ConditionId string
+	Map         int
+	Sync
+}
 
 type Condition struct {
 	ConditionId  string   `json:"conditionId"`
@@ -70,74 +75,6 @@ type Condition struct {
 	Values       []string `json:"values"`
 	TimeTrial    bool     `json:"timeTrial"`
 	Disabled     bool     `json:"disabled"`
-}
-
-func (c *Condition) checkSwitch(switchId int, value bool) (bool, int) {
-	if switchId == c.SwitchId {
-		if c.SwitchValue == value {
-			return true, 0
-		}
-	} else if len(c.SwitchIds) != 0 {
-		for s, sId := range c.SwitchIds {
-			if switchId == sId {
-				if c.SwitchValues[s] == value {
-					return true, s
-				}
-				break
-			}
-		}
-	}
-
-	return false, 0
-}
-
-func (c *Condition) checkVar(varId int, value int) (bool, int) {
-	if varId == c.VarId {
-		var valid bool
-		switch c.VarOp {
-		case "=":
-			valid = value == c.VarValue
-		case "<":
-			valid = value < c.VarValue
-		case ">":
-			valid = value > c.VarValue
-		case "<=":
-			valid = value <= c.VarValue
-		case ">=":
-			valid = value >= c.VarValue
-		case "!=":
-			valid = value != c.VarValue
-		case ">=<":
-			valid = value >= c.VarValue && value < c.VarValue2
-		}
-		return valid, 0
-	} else if len(c.VarIds) != 0 {
-		for v, vId := range c.VarIds {
-			if varId == vId {
-				var valid bool
-				switch c.VarOps[v] {
-				case "=":
-					valid = value == c.VarValues[v]
-				case "<":
-					valid = value < c.VarValues[v]
-				case ">":
-					valid = value > c.VarValues[v]
-				case "<=":
-					valid = value <= c.VarValues[v]
-				case ">=":
-					valid = value >= c.VarValues[v]
-				case "!=":
-					valid = value != c.VarValues[v]
-				}
-				if valid {
-					return true, v
-				}
-				break
-			}
-		}
-	}
-
-	return false, 0
 }
 
 type Badge struct {
@@ -210,15 +147,19 @@ type TimeTrialRecord struct {
 }
 
 func initConditions() {
-	globalConditions = getGlobalConditions()
+	globalSyncs = getGlobalSyncs()
 	for _, roomId := range assets.maps {
 		room := rooms[roomId]
 		if room == nil {
-			room = NewRoom(roomId, false, getRoomConditions(roomId))
+			room = NewRoom(roomId, false, getRoomSyncs(roomId))
 			rooms[roomId] = room
 			continue
 		}
-		rooms[roomId].conditions = getRoomConditions(roomId)
+		rooms[roomId].syncs = getRoomSyncs(roomId)
+		// XXX I feel accessing room clients from here without any synchronization might not be safe
+		for _, c := range rooms[roomId].clients {
+			c.initSyncSteps()
+		}
 	}
 }
 
@@ -284,20 +225,20 @@ func updateActiveBadgesAndConditions() {
 			}
 			switch gameBadge.ReqType {
 			case "tag":
-				if condition, ok := conditions[game][gameBadge.ReqString]; ok {
-					condition.Disabled = gameBadge.Dev
+				if s, ok := conditionSyncs[game][gameBadge.ReqString]; ok && gameBadge.Dev {
+					s.MinLevel = 2
 				}
 			case "tags":
 				for _, tag := range gameBadge.ReqStrings {
-					if condition, ok := conditions[game][tag]; ok {
-						condition.Disabled = gameBadge.Dev
+					if s, ok := conditionSyncs[game][tag]; ok && gameBadge.Dev {
+						s.MinLevel = 2
 					}
 				}
 			case "tagArrays":
 				for _, tags := range gameBadge.ReqStringArrays {
 					for _, tag := range tags {
-						if condition, ok := conditions[game][tag]; ok {
-							condition.Disabled = gameBadge.Dev
+						if s, ok := conditionSyncs[game][tag]; ok && gameBadge.Dev {
+							s.MinLevel = 2
 						}
 					}
 				}
@@ -306,26 +247,36 @@ func updateActiveBadgesAndConditions() {
 	}
 }
 
-func getGlobalConditions() (globalConditions []*Condition) {
-	if gameConditions, ok := conditions[config.gameName]; ok {
-		for _, condition := range gameConditions {
-			if condition.Map == 0 {
-				globalConditions = append(globalConditions, condition)
+func getGlobalSyncs() (syncs []*Sync) {
+	if gameConditions, ok := conditionSyncs[config.gameName]; ok {
+		for _, s := range gameConditions {
+			if s.Map == 0 {
+				syncs = append(syncs, &s.Sync)
 			}
 		}
 	}
-	return globalConditions
+	return syncs
 }
 
-func getRoomConditions(roomId int) (roomConditions []*Condition) {
-	if gameConditions, ok := conditions[config.gameName]; ok {
-		for _, condition := range gameConditions {
-			if condition.Map == roomId {
-				roomConditions = append(roomConditions, condition)
+func getRoomSyncs(roomId int) (syncs []*Sync) {
+	if gameConditions, ok := conditionSyncs[config.gameName]; ok {
+		for _, s := range gameConditions {
+			if s.Map == roomId {
+				syncs = append(syncs, &s.Sync)
 			}
 		}
 	}
-	return roomConditions
+	for mid, m := range getRoomMinigames(roomId) {
+		s := Sync{
+			Target: MinigameSync{mid, m},
+			Steps:  minigameSteps(m),
+		}
+		if m.Dev {
+			s.MinLevel = 1
+		}
+		syncs = append(syncs, &s)
+	}
+	return syncs
 }
 
 // this would probably be better under Room instead of RoomClient
@@ -336,145 +287,78 @@ func (c *RoomClient) checkRoomConditions(trigger string, value string) {
 		return
 	}
 
-	for _, condition := range globalConditions {
-		c.checkCondition(condition, 0, nil, trigger, value)
-	}
-
-	for _, condition := range c.room.conditions {
-		c.checkCondition(condition, c.room.id, c.room.minigames, trigger, value)
+	for i, sync := range c.room.AllSyncs() {
+		c.checkCondition(i, sync)
 	}
 }
 
-func (c *RoomClient) checkCondition(condition *Condition, roomId int, minigames []*Minigame, trigger string, value string) {
-	if condition.Disabled && c.session.rank < 2 {
+// XXX this name sucks
+// also we should probably move these methods next to the receiver struct defs (maybe?)
+// Returns an iterator for all syncs applicable to this room (including global syncs)
+// along with local sync IDs used as indexes for client sync steps.
+func (r *Room) AllSyncs() iter.Seq2[int, *Sync] {
+	return func(yield func(int, *Sync) bool) {
+		base := 0
+		for i, sync := range globalSyncs {
+			if !yield(base+i, sync) {
+				return
+			}
+		}
+		base += len(globalSyncs)
+
+		for i, sync := range r.syncs {
+			if !yield(base+i, sync) {
+				return
+			}
+		}
+	}
+}
+
+func (c *RoomClient) initSyncSteps() {
+	c.syncSteps = make([]int, len(globalSyncs)+len(c.room.syncs))
+}
+
+func (c *RoomClient) SyncStep(syncId int, sync *Sync) Step {
+	if c.syncSteps[syncId] > len(sync.Steps)-1 {
+		return Step{Type: DoneStep}
+	}
+	return sync.Steps[c.syncSteps[syncId]]
+}
+
+func (c *RoomClient) AdvanceSyncStep(syncId int, sync *Sync) {
+	if c.syncSteps[syncId] == len(sync.Steps)-1 {
+		sync.Target.FinishSync(c)
+	} else {
+		c.syncSteps[syncId]++
+		nextStep := c.SyncStep(syncId, sync)
+		for _, msg := range nextStep.Msgs() {
+			c.outbox <- buildMsg(msg...)
+		}
+
+		// XXX not sure if teleport is needed, don't remember the original logic
+		if nextStep.Type == CoordsStep || nextStep.Type == TeleportStep {
+			c.checkStepCoords(&nextStep)
+		}
+	}
+}
+
+func (c *RoomClient) checkCondition(syncId int, sync *Sync) {
+	if c.session.rank < sync.MinLevel {
 		return
 	}
 
-	valueMatched := trigger == ""
-	if condition.Trigger == trigger && !valueMatched {
-		if len(condition.Values) == 0 {
-			valueMatched = value == condition.Value
-		} else {
-			for _, val := range condition.Values {
-				if value == val {
-					valueMatched = true
-					break
-				}
-			}
-		}
-	}
-
-	if condition.Trigger == trigger && valueMatched {
-		if (condition.SwitchId > 0 || len(condition.SwitchIds) != 0) && !condition.VarTrigger {
-			switchId := condition.SwitchId
-			if len(condition.SwitchIds) != 0 {
-				switchId = condition.SwitchIds[0]
-			}
-			var switchSyncType int
-			if trigger == "" {
-				switchSyncType = 2
-				if condition.SwitchDelay {
-					switchSyncType = 1
-				}
-			}
-			c.outbox <- buildMsg("ss", switchId, switchSyncType)
-		} else if condition.VarId > 0 || len(condition.VarIds) != 0 {
-			varId := condition.VarId
-			if len(condition.VarIds) != 0 {
-				varId = condition.VarIds[0]
-			}
-
-			if len(minigames) != 0 {
-				var skipVarSync bool
-				for _, minigame := range minigames {
-					if minigame.VarId == varId {
-						skipVarSync = true
-						break
-					}
-				}
-				if skipVarSync {
-					return
-				}
-			}
-
-			var varSyncType int
-			if trigger == "" {
-				varSyncType = 2
-				if condition.VarDelay {
-					varSyncType = 1
-				}
-			}
-			c.outbox <- buildMsg("sv", varId, varSyncType)
-		} else if c.checkConditionCoords(condition) {
-			timeTrial := condition.TimeTrial && config.gameName == "2kki"
-			if !timeTrial {
-				success, err := tryWritePlayerTag(c.session.uuid, condition.ConditionId)
-				if err != nil {
-					writeErrLog(c.session.uuid, c.mapId, err.Error())
-				}
-				if success {
-					c.outbox <- buildMsg("b")
-				}
-			} else {
-				c.outbox <- buildMsg("ss", 1430, 0)
-			}
-		}
-	} else if trigger == "" {
-		if condition.Trigger == "event" || condition.Trigger == "eventAction" || condition.Trigger == "picture" {
-			var values []string
-			if len(condition.Values) == 0 {
-				values = append(values, condition.Value)
-			} else {
-				values = condition.Values
-			}
-			for _, value := range values {
-				if condition.Trigger == "picture" {
-					c.outbox <- buildMsg("sp", value)
-				} else {
-					valueInt, err := strconv.Atoi(value)
-					if err != nil {
-						writeErrLog(c.session.ip, strconv.Itoa(roomId), err.Error())
-						continue
-					}
-
-					var eventTriggerType int
-					if condition.Trigger == "eventAction" {
-						eventVms, hasGameVms := gameEventVms[config.gameName]
-						if hasGameVms && config.gameName == currentEventVmGame && roomId > 0 && roomId == currentEventVmMapId {
-							if vmGroups, hasVms := eventVms[roomId]; hasVms {
-								var skipEvSync bool
-								for _, vmGroup := range vmGroups {
-									if !slices.Equal(vmGroup, currentEventVmGroup) {
-										continue
-									}
-									if slices.Contains(vmGroup, valueInt) {
-										skipEvSync = true
-										break
-									}
-								}
-								if skipEvSync {
-									continue
-								}
-							}
-						}
-
-						eventTriggerType = 1
-					}
-
-					c.outbox <- buildMsg("sev", value, eventTriggerType)
-				}
-			}
-		} else if condition.Trigger == "coords" {
-			c.syncCoords = true
-		}
+	step := c.SyncStep(syncId, sync)
+	if step.Type == CoordsStep {
+		c.syncCoords = true
 	}
 }
 
-func (c *RoomClient) checkConditionCoords(condition *Condition) bool {
-	return ((condition.MapX1 <= 0 && condition.MapX2 <= 0) ||
-		((condition.MapX1 == -1 || condition.MapX1 <= c.x) && (condition.MapX2 == -1 || condition.MapX2 >= c.x))) &&
-		((condition.MapY1 <= 0 && condition.MapY2 <= 0) ||
-			((condition.MapY1 == -1 || condition.MapY1 <= c.y) && (condition.MapY2 == -1 || condition.MapY2 >= c.y)))
+func (c *RoomClient) checkStepCoords(s *Step) bool {
+	x1, y1, x2, y2 := s.Ints[0], s.Ints[1], s.Ints[2], s.Ints[3]
+	return ((x1 <= 0 && x2 <= 0) ||
+		((x1 == -1 || x1 <= c.x) && (x2 == -1 || x2 >= c.x))) &&
+		((y1 <= 0 && y2 <= 0) ||
+			((y1 == -1 || y1 <= c.y) && (y2 == -1 || y2 >= c.y)))
 }
 
 func getPlayerBadgeData(playerUuid string, playerRank int, playerTags []string, account bool, simple bool) (playerBadges []*PlayerBadge, err error) {
@@ -766,10 +650,20 @@ func ConditionSetup(condition *Condition, filename string) {
 	}
 }
 
+func badgeForTimeTrial(gameId string, mapId int) *Badge {
+	for _, b := range badges[gameId] {
+		if b.Map == mapId {
+			return b
+		}
+	}
+
+	return nil
+}
+
 func setConditions(baseDir string) {
 	logUpdateTask("conditions")
 
-	conditionConfig := make(map[string]map[string]*Condition)
+	conditionConfig := make(map[string]map[string]*ConditionSync)
 
 	gameConditionDirs, err := os.ReadDir(filepath.Join(baseDir, "badges/conditions/"))
 	if err != nil {
@@ -779,7 +673,7 @@ func setConditions(baseDir string) {
 	for _, gameConditionsDir := range gameConditionDirs {
 		if gameConditionsDir.IsDir() {
 			gameId := gameConditionsDir.Name()
-			conditionConfig[gameId] = make(map[string]*Condition)
+			conditionConfig[gameId] = make(map[string]*ConditionSync)
 			configPath := filepath.Join(baseDir, "badges/conditions/"+gameId) + "/"
 			conditionConfigs, err := os.ReadDir(configPath)
 			if err != nil {
@@ -795,15 +689,43 @@ func setConditions(baseDir string) {
 				}
 
 				err = json.Unmarshal(data, &condition)
-				if err == nil {
-					ConditionSetup(&condition, conditionConfigFile.Name())
-					conditionConfig[gameId][condition.ConditionId] = &condition
+				if err != nil {
+					continue
+				}
+				ConditionSetup(&condition, conditionConfigFile.Name())
+				steps, err := conditionSteps(condition)
+				if err != nil {
+					continue
+				}
+				if condition.TimeTrial {
+					if condition.Map <= 0 {
+						continue
+					}
+
+					b := badgeForTimeTrial(gameId, condition.Map)
+					if b == nil {
+						continue
+					}
+
+					steps = append(steps, timeTrialSteps(gameId, b.ReqInt)...)
+				}
+				s := Sync{
+					Target: TagSync{Name: condition.ConditionId},
+					Steps:  steps,
+				}
+				if condition.Disabled {
+					s.MinLevel = 2
+				}
+				conditionConfig[gameId][condition.ConditionId] = &ConditionSync{
+					ConditionId: condition.ConditionId,
+					Map:         condition.Map,
+					Sync:        s,
 				}
 			}
 		}
 	}
 
-	conditions = conditionConfig
+	conditionSyncs = conditionConfig
 }
 
 func setBadges(baseDir string) {

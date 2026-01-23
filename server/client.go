@@ -220,6 +220,7 @@ type RoomClient struct {
 
 	tags []string
 
+	syncSteps  []int
 	syncCoords bool
 
 	minigameScores []int
@@ -332,6 +333,7 @@ func (c *RoomClient) reset() {
 
 	// don't clear tags
 
+	c.syncSteps = c.syncSteps[:0]
 	c.syncCoords = false
 
 	c.minigameScores = nil

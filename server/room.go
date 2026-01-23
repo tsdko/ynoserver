@@ -38,15 +38,15 @@ type Room struct {
 
 	clients []*RoomClient
 
-	conditions []*Condition
-	minigames  []*Minigame
+	syncs     []*Sync
+	minigames []*Minigame
 }
 
-func NewRoom(id int, singleplayer bool, conditions []*Condition) *Room {
+func NewRoom(id int, singleplayer bool, syncs []*Sync) *Room {
 	return &Room{
 		id:           id,
 		singleplayer: singleplayer,
-		conditions:   conditions,
+		syncs:        syncs,
 		minigames:    getRoomMinigames(id),
 	}
 }
@@ -66,7 +66,7 @@ func createRooms(roomIds []int, spRooms []int) {
 		rooms[roomId] = &Room{
 			id:           roomId,
 			singleplayer: slices.Contains(spRooms, roomId),
-			conditions:   getRoomConditions(roomId),
+			syncs:        getRoomSyncs(roomId),
 			minigames:    getRoomMinigames(roomId),
 		}
 	}
@@ -232,6 +232,7 @@ func (c *RoomClient) joinRoom(room *Room) {
 	c.room = room
 
 	c.reset()
+	c.initSyncSteps()
 
 	c.outbox <- buildMsg("ri", c.room.id) // tell client they've switched rooms serverside
 
@@ -458,23 +459,18 @@ func (c *RoomClient) getPlayerData(client *RoomClient) {
 }
 
 func (c *RoomClient) getRoomEventData() {
-	c.checkRoomConditions("", "")
+	for i, s := range c.room.AllSyncs() {
+		step := c.SyncStep(i, s)
+		for _, msg := range step.Msgs() {
+			c.outbox <- buildMsg(msg...)
+		}
 
-	for _, minigame := range c.room.minigames {
-		if minigame.Dev && c.session.rank < 1 {
-			continue
+		// map-only sync conditions have no steps
+		if len(s.Steps) == 0 {
+			s.Target.FinishSync(c)
 		}
-		score, err := getPlayerMinigameScore(c.session.uuid, minigame.Id)
-		if err != nil {
-			writeErrLog(c.session.uuid, c.mapId, "failed to read player minigame score for "+minigame.Id)
-		}
-		c.minigameScores = append(c.minigameScores, score)
-		varSyncType := 1
-		if minigame.InitialVarSync {
-			varSyncType = 2
-		}
-		c.outbox <- buildMsg("sv", minigame.VarId, varSyncType)
 	}
+	c.checkRoomConditions("", "")
 
 	// send variable sync request for vending machine expeditions
 	if c.room.id != currentEventVmMapId {

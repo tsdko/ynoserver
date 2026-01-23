@@ -85,12 +85,28 @@ func (c *RoomClient) handleM(msg []string) error {
 	c.x = x
 	c.y = y
 
+	syncCoords := c.syncCoords
+	coordsStep := CoordsStep
 	if msg[0] == "tp" {
-		c.checkRoomConditions("teleport", "")
+		syncCoords = true
+		coordsStep = TeleportStep
 	}
 
-	if c.syncCoords {
-		c.checkRoomConditions("coords", "")
+	if syncCoords {
+		for i, sync := range c.room.AllSyncs() {
+			if c.session.rank < sync.MinLevel {
+				continue
+			}
+
+			step := c.SyncStep(i, sync)
+			if step.Type != coordsStep {
+				continue
+			}
+
+			if c.checkStepCoords(&step) {
+				c.AdvanceSyncStep(i, sync)
+			}
+		}
 	}
 
 	if msg[0] == "jmp" {
@@ -295,7 +311,17 @@ func (c *RoomClient) handleP(msg []string) error {
 	}
 
 	if isShow {
-		c.checkRoomConditions("picture", msg[17])
+		for i, sync := range c.room.AllSyncs() {
+			if c.session.rank < sync.MinLevel {
+				continue
+			}
+
+			step := c.SyncStep(i, sync)
+			if step.Type != PictureStep || !slices.Contains(step.Strings, msg[17]) {
+				continue
+			}
+			c.AdvanceSyncStep(i, sync)
+		}
 		if !assets.IsValidPicture(msg[17]) {
 			return errors.New("invalid picture")
 		}
@@ -530,104 +556,18 @@ func (c *RoomClient) handleSs(msg []string) error {
 	}
 
 	c.switchCache[switchId] = value
-	if switchId == 1430 && config.gameName == "2kki" { // time trial mode
-		if value {
-			c.outbox <- buildMsg("sv", 88, 0) // time elapsed
-		}
-	} else {
-		if len(c.room.minigames) != 0 {
-			for m, minigame := range c.room.minigames {
-				if minigame.Dev && c.session.rank < 1 {
-					continue
-				}
-				if minigame.SwitchId == switchId && minigame.SwitchValue == value && c.minigameScores[m] < c.varCache[minigame.VarId] {
-					tryWritePlayerMinigameScore(c.session.uuid, minigame.Id, c.varCache[minigame.VarId])
-				}
-			}
+	for i, sync := range c.room.AllSyncs() {
+		if c.session.rank < sync.MinLevel {
+			continue
 		}
 
-		for _, condition := range append(globalConditions, c.room.conditions...) {
-			validVars := !condition.VarTrigger
-			if condition.VarTrigger {
-				if condition.VarId > 0 {
-					if value, ok := c.varCache[condition.VarId]; ok {
-						if validVar, _ := condition.checkVar(condition.VarId, value); validVar {
-							validVars = true
-						}
-					}
-				} else if len(condition.VarIds) != 0 {
-					validVars = true
-					for _, vId := range condition.VarIds {
-						if value, ok := c.varCache[vId]; ok {
-							if validVar, _ := condition.checkVar(vId, value); !validVar {
-								validVars = false
-								break
-							}
-						} else {
-							validVars = false
-							break
-						}
-					}
-				} else {
-					validVars = true
-				}
-			}
+		step := c.SyncStep(i, sync)
+		if step.Type != SwitchStep || step.Ints[1] != switchId {
+			continue
+		}
 
-			if validVars {
-				if switchId == condition.SwitchId {
-					if valid, _ := condition.checkSwitch(switchId, value); valid {
-						if condition.VarTrigger || (condition.VarId == 0 && len(condition.VarIds) == 0) {
-							if !condition.TimeTrial {
-								if c.checkConditionCoords(condition) {
-									success, err := tryWritePlayerTag(c.session.uuid, condition.ConditionId)
-									if err != nil {
-										return err
-									}
-									if success {
-										c.outbox <- buildMsg("b")
-									}
-								}
-							} else if config.gameName == "2kki" {
-								c.outbox <- buildMsg("ss", 1430, 0)
-							}
-						} else {
-							varId := condition.VarId
-							if len(condition.VarIds) != 0 {
-								varId = condition.VarIds[0]
-							}
-							c.outbox <- buildMsg("sv", varId, 0)
-						}
-					}
-				} else if len(condition.SwitchIds) != 0 {
-					if valid, s := condition.checkSwitch(switchId, value); valid {
-						if s == len(condition.SwitchIds)-1 {
-							if condition.VarTrigger || (condition.VarId == 0 && len(condition.VarIds) == 0) {
-								if !condition.TimeTrial {
-									if c.checkConditionCoords(condition) {
-										success, err := tryWritePlayerTag(c.session.uuid, condition.ConditionId)
-										if err != nil {
-											return err
-										}
-										if success {
-											c.outbox <- buildMsg("b")
-										}
-									}
-								} else if config.gameName == "2kki" {
-									c.outbox <- buildMsg("ss", 1430, 0)
-								}
-							} else {
-								varId := condition.VarId
-								if len(condition.VarIds) != 0 {
-									varId = condition.VarIds[0]
-								}
-								c.outbox <- buildMsg("sv", varId, 0)
-							}
-						} else {
-							c.outbox <- buildMsg("ss", condition.SwitchIds[s+1], 0)
-						}
-					}
-				}
-			}
+		if value == (step.Ints[2] == 1) {
+			c.AdvanceSyncStep(i, sync)
 		}
 	}
 
@@ -649,127 +589,24 @@ func (c *RoomClient) handleSv(msg []string) error {
 	}
 	c.varCache[varId] = value
 
-	conditions := append(globalConditions, c.room.conditions...)
-
-	if varId == 88 && config.gameName == "2kki" {
-		if c.notifiedMaps == nil {
-			c.notifiedMaps = make(map[int]bool)
-		}
-		for _, condition := range conditions {
-			if condition.TimeTrial && value < 3600 {
-				if c.checkConditionCoords(condition) {
-					if !c.notifiedMaps[condition.Map] {
-						c.session.outbox <- buildMsg("ttr", c.room.id, value)
-						c.notifiedMaps[condition.Map] = true
-					}
-					success, err := tryWritePlayerTimeTrial(c.session.uuid, c.room.id, value)
-					if err != nil {
-						return err
-					}
-					if success {
-						c.outbox <- buildMsg("b")
-					}
-				}
-			}
-		}
-	} else {
-		if len(c.room.minigames) != 0 {
-			for m, minigame := range c.room.minigames {
-				if minigame.Dev && c.session.rank < 1 {
-					continue
-				}
-				if minigame.VarId == varId && c.minigameScores[m] < value {
-					if minigame.SwitchId > 0 {
-						c.outbox <- buildMsg("ss", minigame.SwitchId, 0)
-					} else {
-						tryWritePlayerMinigameScore(c.session.uuid, minigame.Id, value)
-					}
-				}
-			}
+	for i, sync := range c.room.AllSyncs() {
+		if c.session.rank < sync.MinLevel {
+			continue
 		}
 
-		for _, condition := range conditions {
-			validSwitches := condition.VarTrigger
-			if !condition.VarTrigger {
-				if condition.SwitchId > 0 {
-					if value, ok := c.switchCache[condition.SwitchId]; ok {
-						if validSwitch, _ := condition.checkSwitch(condition.SwitchId, value); validSwitch {
-							validSwitches = true
-						}
-					}
-				} else if len(condition.SwitchIds) != 0 {
-					validSwitches = true
-					for _, sId := range condition.SwitchIds {
-						if value, ok := c.switchCache[sId]; ok {
-							if validSwitch, _ := condition.checkSwitch(sId, value); !validSwitch {
-								validSwitches = false
-								break
-							}
-						} else {
-							validSwitches = false
-							break
-						}
-					}
-				} else {
-					validSwitches = true
-				}
-			}
+		step := c.SyncStep(i, sync)
+		if step.Type != VarStep || step.Ints[1] != varId {
+			continue
+		}
 
-			if validSwitches {
-				if varId == condition.VarId {
-					if valid, _ := condition.checkVar(varId, value); valid {
-						if !condition.VarTrigger || (condition.SwitchId == 0 && len(condition.SwitchIds) == 0) {
-							if !condition.TimeTrial {
-								if c.checkConditionCoords(condition) {
-									success, err := tryWritePlayerTag(c.session.uuid, condition.ConditionId)
-									if err != nil {
-										return err
-									}
-									if success {
-										c.outbox <- buildMsg("b")
-									}
-								}
-							} else if config.gameName == "2kki" {
-								c.outbox <- buildMsg("ss", 1430, 0)
-							}
-						} else {
-							switchId := condition.SwitchId
-							if len(condition.SwitchIds) != 0 {
-								switchId = condition.SwitchIds[0]
-							}
-							c.outbox <- buildMsg("ss", switchId, 0)
-						}
-					}
-				} else if len(condition.VarIds) != 0 {
-					if valid, v := condition.checkVar(varId, value); valid {
-						if v == len(condition.VarIds)-1 {
-							if !condition.VarTrigger || (condition.SwitchId == 0 && len(condition.SwitchIds) == 0) {
-								if !condition.TimeTrial {
-									if c.checkConditionCoords(condition) {
-										success, err := tryWritePlayerTag(c.session.uuid, condition.ConditionId)
-										if err != nil {
-											return err
-										}
-										if success {
-											c.outbox <- buildMsg("b")
-										}
-									}
-								} else if config.gameName == "2kki" {
-									c.outbox <- buildMsg("ss", 1430, 0)
-								}
-							} else {
-								switchId := condition.SwitchId
-								if len(condition.SwitchIds) != 0 {
-									switchId = condition.SwitchIds[0]
-								}
-								c.outbox <- buildMsg("ss", switchId, 0)
-							}
-						} else {
-							c.outbox <- buildMsg("sv", condition.VarIds[v+1], 0)
-						}
-					}
-				}
-			}
+		op := StepVarOp(step.Ints[2])
+		o1 := step.Ints[3]
+		o2 := 0
+		if len(step.Ints) > 4 {
+			o2 = step.Ints[4]
+		}
+		if op.Exec(value, o1, o2) {
+			c.AdvanceSyncStep(i, sync)
 		}
 	}
 
@@ -781,19 +618,32 @@ func (c *RoomClient) handleSev(msg []string) error {
 		return errors.New("segment count mismatch")
 	}
 
-	triggerType := "event"
-	if msg[2] != "0" {
-		triggerType = "eventAction"
-	}
-	c.checkRoomConditions(triggerType, msg[1])
-
-	if c.room.id != currentEventVmMapId {
-		return errors.New("event vm room id mismatch")
-	}
-
 	eventIdInt, err := strconv.Atoi(msg[1])
 	if err != nil {
 		return err
+	}
+
+	triggerType := 0
+	if msg[2] != "0" {
+		triggerType = 1
+	}
+	for i, sync := range c.room.AllSyncs() {
+		if c.session.rank < sync.MinLevel {
+			continue
+		}
+
+		step := c.SyncStep(i, sync)
+		if step.Type != EventStep {
+			continue
+		}
+
+		if step.Ints[0] == triggerType && step.Ints[1] == eventIdInt {
+			c.AdvanceSyncStep(i, sync)
+		}
+	}
+
+	if c.room.id != currentEventVmMapId {
+		return errors.New("event vm room id mismatch")
 	}
 
 	if !slices.Contains(currentEventVmGroup, eventIdInt) {
@@ -897,8 +747,25 @@ func (c *SessionClient) handlePloc(msg []string) error {
 	c.roomC.prevMapId = msg[1]
 	c.roomC.prevLocations = msg[2]
 
-	c.roomC.checkRoomConditions("prevMap", c.roomC.prevMapId)
+	for i, sync := range c.roomC.room.AllSyncs() {
+		if c.rank < sync.MinLevel {
+			continue
+		}
 
+		step := c.roomC.SyncStep(i, sync)
+		if step.Type != PrevMapStep {
+			continue
+		}
+
+		prevMapInt, err := strconv.Atoi(c.roomC.prevMapId)
+		if err != nil {
+			continue
+		}
+
+		if slices.Contains(step.Ints, prevMapInt) {
+			c.roomC.AdvanceSyncStep(i, sync)
+		}
+	}
 	return nil
 }
 
