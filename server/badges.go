@@ -146,6 +146,36 @@ type TimeTrialRecord struct {
 	Seconds int `json:"seconds"`
 }
 
+func attachTimeTrialSyncSteps() {
+	// XXX extra loop over both badges and conditionSyncs;
+	// ideally we would set this up on initialzation of either
+	// but with the way the code is currently structured it would
+	// create a dependency on the order in which badges and conditions
+	// are initialized
+	for game, gameBadges := range badges {
+		mapTrialTimes := make(map[int]int)
+		for _, b := range gameBadges {
+			if b.ReqType != "timeTrial" {
+				continue
+			}
+			mapTrialTimes[b.Map] = b.ReqInt
+		}
+		for _, cs := range conditionSyncs[game] {
+			reqSecs, ok := mapTrialTimes[cs.Map]
+			if !ok {
+				continue
+			}
+
+			tts, ok := cs.Sync.Target.(TimeTrialSync)
+			if !ok {
+				continue
+			}
+
+			cs.Sync.Steps = append(cs.Sync.Steps, timeTrialSteps(tts.GameId, reqSecs)...)
+		}
+	}
+}
+
 func initConditions() {
 	globalSyncs = getGlobalSyncs()
 	for _, roomId := range assets.maps {
@@ -166,6 +196,7 @@ func initConditions() {
 func LoadBadgeData(baseDir string) {
 	setConditions(baseDir)
 	setBadges(baseDir)
+	attachTimeTrialSyncSteps()
 	initConditions()
 }
 
@@ -693,24 +724,19 @@ func setConditions(baseDir string) {
 					continue
 				}
 				ConditionSetup(&condition, conditionConfigFile.Name())
-				steps, err := conditionSteps(condition)
-				if err != nil {
-					continue
-				}
+				var target SyncTarget = TagSync{Name: condition.ConditionId}
 				if condition.TimeTrial {
 					if condition.Map <= 0 {
 						continue
 					}
-
-					b := badgeForTimeTrial(gameId, condition.Map)
-					if b == nil {
-						continue
-					}
-
-					steps = append(steps, timeTrialSteps(gameId, b.ReqInt)...)
+					target = TimeTrialSync{GameId: gameId}
+				}
+				steps, err := conditionSteps(condition)
+				if err != nil {
+					continue
 				}
 				s := Sync{
-					Target: TagSync{Name: condition.ConditionId},
+					Target: target,
 					Steps:  steps,
 				}
 				if condition.Disabled {

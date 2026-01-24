@@ -88,10 +88,10 @@ func (v VmSync) FinishSync(c *RoomClient) error {
 	return errors.New("unimplemented")
 }
 
-type TimeTrialSync struct{ TimeVar int }
+type TimeTrialSync struct{ GameId string }
 
 func (t TimeTrialSync) FinishSync(c *RoomClient) error {
-	value := c.varCache[t.TimeVar]
+	value := c.varCache[timeTrialTimeVars[t.GameId]]
 	if value >= 3600 {
 		return nil
 	}
@@ -292,6 +292,8 @@ func minigameSteps(minigame *Minigame) []Step {
 	return steps
 }
 
+var timeTrialTimeVars = map[string]int{"2kki": 88}
+
 func timeTrialSteps(game string, secs int) []Step {
 	if game != "2kki" {
 		panic("unsupported game for time trial: " + game)
@@ -299,7 +301,7 @@ func timeTrialSteps(game string, secs int) []Step {
 
 	// TODO: if there are extra condition steps, they should be put before the time-trial-specific ones
 	steps := switchSteps(0, []int{1430}, []bool{true})
-	steps = append(steps, varSteps(0, []int{88}, []string{"true"}, []int{0})...) // XXX ugly
+	steps = append(steps, varSteps(0, []int{timeTrialTimeVars[game]}, []string{"true"}, []int{0})...) // XXX ugly
 	return steps
 }
 
