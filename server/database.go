@@ -34,6 +34,11 @@ import (
 
 var db *sql.DB
 
+// lazy and ugly way of making some db operations not crash in test code
+// (where we don't expect to have a db to use)
+// enabled in TestInit
+var stubDb = false
+
 func getDatabaseConn(user, password, addr, database string) *sql.DB {
 	conn, err := sql.Open("mysql", fmt.Sprintf("%s:%s@%s/%s?parseTime=true", user, password, addr, database))
 	if err != nil {
@@ -1468,13 +1473,13 @@ func tryWritePlayerTag(playerUuid string, name string) (success bool, err error)
 		// Spare SQL having to deal with a duplicate record by checking player tags beforehand
 		tagExists := slices.Contains(tags, name)
 		if !tagExists {
-			// XXX assume db write always succeeds
-			/*
+			if stubDb {
+				return true, nil
+			}
 			_, err = db.Exec("INSERT INTO playerTags (uuid, name, timestampUnlocked) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE name = name", playerUuid, name, time.Now())
 			if err != nil {
 				return false, err
 			}
-			*/
 			return true, nil
 		}
 	}
@@ -1505,8 +1510,9 @@ func getPlayerTimeTrialRecords(playerUuid string) (timeTrialRecords []*TimeTrial
 }
 
 func tryWritePlayerTimeTrial(playerUuid string, mapId int, seconds int) (success bool, err error) {
-	// XXX assumed to always succeed
-	return true, nil
+	if stubDb {
+		return true, nil
+	}
 
 	var prevSeconds int
 	err = db.QueryRow("SELECT seconds FROM playerTimeTrials WHERE uuid = ? AND mapId = ?", playerUuid, mapId).Scan(&prevSeconds)

@@ -219,6 +219,7 @@ func (c *RoomClient) RecvMsg() ([]string, error) {
 }
 
 func TestInit(mapIds []int) {
+	stubDb = true
 	config = &Config{}
 	assets = &Assets{maps: mapIds}
 }
