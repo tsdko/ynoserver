@@ -1,22 +1,16 @@
 package server
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
 )
-
-//type SyncType int
 
 // keep in mind interfaces have allocation overhead (dynamic dispatch too but might not be that important here)
 // also having two different approaches to polymorphism in the same file smells a bit
 type SyncTarget interface {
 	FinishSync(c *RoomClient) error
 }
-
-// todo: disconnectsync for e.g. the 2kki debug switch?
-// or maybe just make sync target a func pointer instead?
 
 type MinigameSync struct {
 	roomMinigameId int
@@ -51,42 +45,6 @@ func (t TagSync) FinishSync(c *RoomClient) error {
 		c.outbox <- buildMsg("b")
 	}
 	return nil
-}
-
-// XXX: this would have to be uninjected and reinjected on vending machine change, seems ugly
-type VmSync struct{}
-
-func (v VmSync) FinishSync(c *RoomClient) error {
-	// TODO: implement
-
-	// ideally we wouldn't have to do this but this would mean removing this from the room sync list on vending machine change; right now we don't even support modifying that set live (clients are supposed to hold separate slices of indices into that set)
-	if c.room.id != currentEventVmMapId {
-		return errors.New("event vm room id mismatch")
-	}
-
-	// expected to be tested prior to this via event steps
-	/*
-		eventIdInt, err := strconv.Atoi(msg[1])
-		if err != nil {
-			return err
-		}
-
-		if !slices.Contains(currentEventVmGroup, eventIdInt) {
-			return errors.New("event vm id mismatch")
-		}
-	*/
-
-	// XXX: we don't have access to the specific event id from here
-	/*
-		exp, err := tryCompleteEventVm(c.session.uuid, currentEventVmMapId, eventIdInt)
-		if err != nil {
-			return err
-		}
-		if exp > -1 {
-			c.session.outbox <- buildMsg("vm", exp)
-		}
-	*/
-	return errors.New("unimplemented")
 }
 
 type TimeTrialSync struct{ GameId string }
@@ -301,7 +259,6 @@ func timeTrialSteps(game string, secs int) []Step {
 		panic("unsupported game for time trial: " + game)
 	}
 
-	// TODO: if there are extra condition steps, they should be put before the time-trial-specific ones
 	steps := switchSteps(0, []int{1430}, []bool{true})
 	steps = append(steps, varSteps(0, []int{timeTrialTimeVars[game]}, []string{"true"}, []int{0})...) // XXX ugly
 	return steps
@@ -329,12 +286,6 @@ func conditionSteps(c Condition) ([]Step, error) {
 		steps = append(steps, Step{Type: PrevMapStep, Ints: intValues})
 	}
 
-	/*
-		// should be handled outside of steps
-		if c.Map != 0 {
-			s.RoomID = c.Map
-		}
-	*/
 	if c.Trigger == "coords" || c.MapX1 != 0 || c.MapY1 != 0 || c.MapX2 != 0 || c.MapY2 != 0 {
 		t := CoordsStep
 		if c.Trigger == "teleport" {
