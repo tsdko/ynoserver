@@ -231,6 +231,9 @@ func LoadBadgeData(baseDir string) {
 func SetGameName(name string) {
 	config.gameName = name
 	initConditions()
+	for id, r := range rooms {
+		r.minigames = getRoomMinigames(id)
+	}
 }
 
 func initBadges() {

@@ -44,9 +44,10 @@ type Room struct {
 
 func NewRoom(id int, singleplayer bool, conditions []*Condition) *Room {
 	return &Room{
-		id: id,
+		id:           id,
 		singleplayer: singleplayer,
-		conditions: conditions,
+		conditions:   conditions,
+		minigames:    getRoomMinigames(id),
 	}
 }
 
@@ -163,9 +164,9 @@ func joinRoomWs(conn *websocket.Conn, ip string, token string, roomId int) {
 
 func NewRoomClient(conn *websocket.Conn, sess *SessionClient) *RoomClient {
 	r := &RoomClient{
-		conn:   conn,
-		outbox: make(chan []byte, 256),
-		key:    serverSecurity.NewClientKey(),
+		conn:    conn,
+		outbox:  make(chan []byte, 256),
+		key:     serverSecurity.NewClientKey(),
 		session: sess,
 	}
 	if sess != nil {
