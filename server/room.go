@@ -460,7 +460,7 @@ func (c *RoomClient) getPlayerData(client *RoomClient) {
 }
 
 func (c *RoomClient) getRoomEventData() {
-	for i, s := range c.Syncs() {
+	for i, s := range c.Syncs(AnyStep) {
 		step := c.SyncStep(i, s)
 		for _, msg := range step.Msgs() {
 			c.outbox <- buildMsg(msg...)

@@ -25,7 +25,6 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -333,7 +332,7 @@ func (r *Room) allSyncs() iter.Seq2[int, *Sync] {
 	}
 }
 
-func (c *RoomClient) Syncs(stepTypes ...StepType) iter.Seq2[int, *Sync] {
+func (c *RoomClient) Syncs(stepMask StepType) iter.Seq2[int, *Sync] {
 	return func(yield func(int, *Sync) bool) {
 		for i, sync := range c.room.allSyncs() {
 			if !c.session.account || c.session.rank < sync.MinRank {
@@ -341,7 +340,7 @@ func (c *RoomClient) Syncs(stepTypes ...StepType) iter.Seq2[int, *Sync] {
 			}
 
 			step := c.SyncStep(i, sync)
-			if len(stepTypes) > 0 && !slices.Contains(stepTypes, step.Type) {
+			if step.Type&stepMask != step.Type {
 				continue
 			}
 

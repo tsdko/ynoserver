@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 )
 
@@ -118,11 +119,10 @@ type Sync struct {
 	MinRank int
 }
 
-type StepType int
+type StepType int32
 
-// maybe TODO: making this a mask could make it serve double duty as a filter for condition checks, maybe
 const (
-	PrevMapStep StepType = iota
+	PrevMapStep StepType = 1 << iota
 	CoordsStep
 	TeleportStep
 	EventStep
@@ -130,6 +130,8 @@ const (
 	SwitchStep
 	VarStep
 	DoneStep
+
+	AnyStep StepType = math.MaxInt32
 )
 
 type Step struct {
