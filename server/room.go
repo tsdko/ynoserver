@@ -460,10 +460,14 @@ func (c *RoomClient) getPlayerData(client *RoomClient) {
 }
 
 func (c *RoomClient) getRoomEventData() {
-	for i, s := range c.room.AllSyncs() {
+	for i, s := range c.Syncs() {
 		step := c.SyncStep(i, s)
 		for _, msg := range step.Msgs() {
 			c.outbox <- buildMsg(msg...)
+		}
+
+		if step.Type == CoordsStep {
+			c.syncCoords = true
 		}
 
 		// map-only sync conditions have no steps
@@ -471,7 +475,6 @@ func (c *RoomClient) getRoomEventData() {
 			s.Target.FinishSync(c)
 		}
 	}
-	c.checkRoomConditions("", "")
 
 	// send variable sync request for vending machine expeditions
 	if c.room.id != currentEventVmMapId {

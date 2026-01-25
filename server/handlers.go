@@ -93,16 +93,8 @@ func (c *RoomClient) handleM(msg []string) error {
 	}
 
 	if syncCoords {
-		for i, sync := range c.room.AllSyncs() {
-			if c.session.rank < sync.MinRank {
-				continue
-			}
-
+		for i, sync := range c.Syncs(coordsStep) {
 			step := c.SyncStep(i, sync)
-			if step.Type != coordsStep {
-				continue
-			}
-
 			if c.checkStepCoords(&step) {
 				c.AdvanceSyncStep(i, sync)
 			}
@@ -311,13 +303,9 @@ func (c *RoomClient) handleP(msg []string) error {
 	}
 
 	if isShow {
-		for i, sync := range c.room.AllSyncs() {
-			if c.session.rank < sync.MinRank {
-				continue
-			}
-
+		for i, sync := range c.Syncs(PictureStep) {
 			step := c.SyncStep(i, sync)
-			if step.Type != PictureStep || !slices.Contains(step.Strings, msg[17]) {
+			if !slices.Contains(step.Strings, msg[17]) {
 				continue
 			}
 			c.AdvanceSyncStep(i, sync)
@@ -556,13 +544,9 @@ func (c *RoomClient) handleSs(msg []string) error {
 	}
 
 	c.switchCache[switchId] = value
-	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinRank {
-			continue
-		}
-
+	for i, sync := range c.Syncs(SwitchStep) {
 		step := c.SyncStep(i, sync)
-		if step.Type != SwitchStep || step.Ints[1] != switchId {
+		if step.Ints[1] != switchId {
 			continue
 		}
 
@@ -589,13 +573,9 @@ func (c *RoomClient) handleSv(msg []string) error {
 	}
 	c.varCache[varId] = value
 
-	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinRank {
-			continue
-		}
-
+	for i, sync := range c.Syncs(VarStep) {
 		step := c.SyncStep(i, sync)
-		if step.Type != VarStep || step.Ints[1] != varId {
+		if step.Ints[1] != varId {
 			continue
 		}
 
@@ -627,16 +607,8 @@ func (c *RoomClient) handleSev(msg []string) error {
 	if msg[2] != "0" {
 		triggerType = 1
 	}
-	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinRank {
-			continue
-		}
-
+	for i, sync := range c.Syncs(EventStep) {
 		step := c.SyncStep(i, sync)
-		if step.Type != EventStep {
-			continue
-		}
-
 		if step.Ints[0] == triggerType && step.Ints[1] == eventIdInt {
 			c.AdvanceSyncStep(i, sync)
 		}
@@ -747,21 +719,13 @@ func (c *SessionClient) handlePloc(msg []string) error {
 	c.roomC.prevMapId = msg[1]
 	c.roomC.prevLocations = msg[2]
 
-	for i, sync := range c.roomC.room.AllSyncs() {
-		if c.rank < sync.MinRank {
-			continue
-		}
-
-		step := c.roomC.SyncStep(i, sync)
-		if step.Type != PrevMapStep {
-			continue
-		}
-
+	for i, sync := range c.roomC.Syncs(PrevMapStep) {
 		prevMapInt, err := strconv.Atoi(c.roomC.prevMapId)
 		if err != nil {
 			continue
 		}
 
+		step := c.roomC.SyncStep(i, sync)
 		if slices.Contains(step.Ints, prevMapInt) {
 			c.roomC.AdvanceSyncStep(i, sync)
 		}

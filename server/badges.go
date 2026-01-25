@@ -25,6 +25,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -310,24 +311,11 @@ func getRoomSyncs(roomId int) (syncs []*Sync) {
 	return syncs
 }
 
-// this would probably be better under Room instead of RoomClient
-// but passing RoomClient as an argument every time just seems wasteful
-// not like anyone's going to see this anyways, right?
-func (c *RoomClient) checkRoomConditions(trigger string, value string) {
-	if !c.session.account {
-		return
-	}
-
-	for i, sync := range c.room.AllSyncs() {
-		c.checkCondition(i, sync)
-	}
-}
-
 // XXX this name sucks
 // also we should probably move these methods next to the receiver struct defs (maybe?)
 // Returns an iterator for all syncs applicable to this room (including global syncs)
 // along with local sync IDs used as indexes for client sync steps.
-func (r *Room) AllSyncs() iter.Seq2[int, *Sync] {
+func (r *Room) allSyncs() iter.Seq2[int, *Sync] {
 	return func(yield func(int, *Sync) bool) {
 		base := 0
 		for i, sync := range globalSyncs {
@@ -339,6 +327,25 @@ func (r *Room) AllSyncs() iter.Seq2[int, *Sync] {
 
 		for i, sync := range r.syncs {
 			if !yield(base+i, sync) {
+				return
+			}
+		}
+	}
+}
+
+func (c *RoomClient) Syncs(stepTypes ...StepType) iter.Seq2[int, *Sync] {
+	return func(yield func(int, *Sync) bool) {
+		for i, sync := range c.room.allSyncs() {
+			if !c.session.account || c.session.rank < sync.MinRank {
+				continue
+			}
+
+			step := c.SyncStep(i, sync)
+			if len(stepTypes) > 0 && !slices.Contains(stepTypes, step.Type) {
+				continue
+			}
+
+			if !yield(i, sync) {
 				return
 			}
 		}
@@ -370,17 +377,6 @@ func (c *RoomClient) AdvanceSyncStep(syncId int, sync *Sync) {
 		if nextStep.Type == CoordsStep || nextStep.Type == TeleportStep {
 			c.checkStepCoords(&nextStep)
 		}
-	}
-}
-
-func (c *RoomClient) checkCondition(syncId int, sync *Sync) {
-	if c.session.rank < sync.MinRank {
-		return
-	}
-
-	step := c.SyncStep(syncId, sync)
-	if step.Type == CoordsStep {
-		c.syncCoords = true
 	}
 }
 
