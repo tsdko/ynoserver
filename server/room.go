@@ -233,6 +233,7 @@ func (c *RoomClient) joinRoom(room *Room) {
 
 	c.reset()
 	c.initSyncSteps()
+	c.minigameScores = make([]int, len(c.room.minigames))
 
 	c.outbox <- buildMsg("ri", c.room.id) // tell client they've switched rooms serverside
 
