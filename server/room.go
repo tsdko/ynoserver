@@ -55,6 +55,10 @@ func RoomById(id int) *Room {
 	return rooms[id]
 }
 
+func (r *Room) Minigames() []*Minigame {
+	return r.minigames
+}
+
 func createRooms(roomIds []int, spRooms []int) {
 	logInitTask("rooms")
 

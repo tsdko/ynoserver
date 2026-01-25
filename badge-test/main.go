@@ -79,7 +79,7 @@ func packetsForSwitches(c *server.Condition, switchIds []int, switchValues []boo
 	return packets
 }
 
-func packetsForVars(c *server.Condition, varIds []int, varOps []string, varValues []int) []Packet {
+func packetsForVars(c *server.Condition, minigames []*server.Minigame, varIds []int, varOps []string, varValues []int) []Packet {
 	packets := []Packet{}
 	triggerNum := 0
 	// TODO: skip sync packet if it's a registered minigame var (sounds jank)
@@ -93,6 +93,18 @@ func packetsForVars(c *server.Condition, varIds []int, varOps []string, varValue
 			triggerNum = 1
 		} else {
 			triggerNum = 2
+		}
+		if triggerNum > 0 {
+			// if a minigame shares the var id, the minigame trigger takes precedence
+			for _, m := range minigames {
+				if m.VarId != varIds[i] {
+					continue
+				}
+				triggerNum = 1
+				if m.InitialVarSync {
+					triggerNum = 2
+				}
+			}
 		}
 
 		// these come in a sequence - you only get sv for var 0 first, you send var 0,
@@ -198,7 +210,7 @@ func sessionForCondition(c server.Condition, extra condExtra) Session {
 		switchPackets = packetsForSwitches(&c, switchIds, switchValues)
 	}
 	if len(varIds) > 0 {
-		varPackets = packetsForVars(&c, varIds, varOps, varValues)
+		varPackets = packetsForVars(&c, extra.Minigames, varIds, varOps, varValues)
 	}
 	if c.VarTrigger {
 		s.Packets = append(s.Packets, varPackets...)
@@ -241,6 +253,7 @@ func packetsForTimeTrial(mapid, secs int) []Packet {
 }
 
 type condExtra struct {
+	Minigames     []*server.Minigame
 	TimeTrialSecs int
 }
 
@@ -434,6 +447,9 @@ func main() {
 			for _, cid := range tags {
 				cond := conds[gi][cid]
 				log.Println(cid)
+				if room := server.RoomById(cond.Map); room != nil {
+					extra.Minigames = room.Minigames()
+				}
 				runCondSession(cond, extra)
 			}
 		}

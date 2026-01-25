@@ -360,6 +360,7 @@ func conditionSteps(c Condition) ([]Step, error) {
 		// response sent immediately and then every time the var is written to
 		varInitTrigger = 2
 	}
+	// TODO: if a minigame shares the var id, the minigame trigger takes precedence
 
 	if c.VarTrigger {
 		steps = append(steps, varSteps(varInitTrigger, varIds, varOps, varValues)...)
