@@ -94,7 +94,7 @@ func (c *RoomClient) handleM(msg []string) error {
 
 	if syncCoords {
 		for i, sync := range c.room.AllSyncs() {
-			if c.session.rank < sync.MinLevel {
+			if c.session.rank < sync.MinRank {
 				continue
 			}
 
@@ -312,7 +312,7 @@ func (c *RoomClient) handleP(msg []string) error {
 
 	if isShow {
 		for i, sync := range c.room.AllSyncs() {
-			if c.session.rank < sync.MinLevel {
+			if c.session.rank < sync.MinRank {
 				continue
 			}
 
@@ -557,7 +557,7 @@ func (c *RoomClient) handleSs(msg []string) error {
 
 	c.switchCache[switchId] = value
 	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinLevel {
+		if c.session.rank < sync.MinRank {
 			continue
 		}
 
@@ -590,7 +590,7 @@ func (c *RoomClient) handleSv(msg []string) error {
 	c.varCache[varId] = value
 
 	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinLevel {
+		if c.session.rank < sync.MinRank {
 			continue
 		}
 
@@ -628,7 +628,7 @@ func (c *RoomClient) handleSev(msg []string) error {
 		triggerType = 1
 	}
 	for i, sync := range c.room.AllSyncs() {
-		if c.session.rank < sync.MinLevel {
+		if c.session.rank < sync.MinRank {
 			continue
 		}
 
@@ -748,7 +748,7 @@ func (c *SessionClient) handlePloc(msg []string) error {
 	c.roomC.prevLocations = msg[2]
 
 	for i, sync := range c.roomC.room.AllSyncs() {
-		if c.rank < sync.MinLevel {
+		if c.rank < sync.MinRank {
 			continue
 		}
 

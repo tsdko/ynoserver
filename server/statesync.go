@@ -113,9 +113,9 @@ func (t TimeTrialSync) FinishSync(c *RoomClient) error {
 }
 
 type Sync struct {
-	Target   SyncTarget
-	Steps    []Step
-	MinLevel int
+	Target  SyncTarget
+	Steps   []Step
+	MinRank int
 }
 
 type StepType int

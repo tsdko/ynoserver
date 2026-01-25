@@ -257,19 +257,19 @@ func updateActiveBadgesAndConditions() {
 			switch gameBadge.ReqType {
 			case "tag":
 				if s, ok := conditionSyncs[game][gameBadge.ReqString]; ok && gameBadge.Dev {
-					s.MinLevel = 2
+					s.MinRank = 2
 				}
 			case "tags":
 				for _, tag := range gameBadge.ReqStrings {
 					if s, ok := conditionSyncs[game][tag]; ok && gameBadge.Dev {
-						s.MinLevel = 2
+						s.MinRank = 2
 					}
 				}
 			case "tagArrays":
 				for _, tags := range gameBadge.ReqStringArrays {
 					for _, tag := range tags {
 						if s, ok := conditionSyncs[game][tag]; ok && gameBadge.Dev {
-							s.MinLevel = 2
+							s.MinRank = 2
 						}
 					}
 				}
@@ -303,7 +303,7 @@ func getRoomSyncs(roomId int) (syncs []*Sync) {
 			Steps:  minigameSteps(m),
 		}
 		if m.Dev {
-			s.MinLevel = 1
+			s.MinRank = 1
 		}
 		syncs = append(syncs, &s)
 	}
@@ -374,7 +374,7 @@ func (c *RoomClient) AdvanceSyncStep(syncId int, sync *Sync) {
 }
 
 func (c *RoomClient) checkCondition(syncId int, sync *Sync) {
-	if c.session.rank < sync.MinLevel {
+	if c.session.rank < sync.MinRank {
 		return
 	}
 
@@ -740,7 +740,7 @@ func setConditions(baseDir string) {
 					Steps:  steps,
 				}
 				if condition.Disabled {
-					s.MinLevel = 2
+					s.MinRank = 2
 				}
 				conditionConfig[gameId][condition.ConditionId] = &ConditionSync{
 					ConditionId: condition.ConditionId,
