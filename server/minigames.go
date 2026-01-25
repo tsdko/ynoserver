@@ -68,6 +68,8 @@ func getRoomMinigames(roomId int) (minigames []*Minigame) {
 }
 
 func getPlayerMinigameScore(playerUuid string, minigameId string) (score int, err error) {
+	// XXX stubbed
+	return 0, nil
 	err = db.QueryRow("SELECT score FROM playerMinigameScores WHERE uuid = ? AND minigameId = ?", playerUuid, minigameId).Scan(&score)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -80,6 +82,8 @@ func getPlayerMinigameScore(playerUuid string, minigameId string) (score int, er
 }
 
 func tryWritePlayerMinigameScore(playerUuid string, minigameId string, score int) (success bool, err error) {
+	// XXX stubbed
+	return true, nil
 	if score <= 0 {
 		return false, nil
 	}
