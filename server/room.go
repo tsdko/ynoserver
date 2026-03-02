@@ -402,20 +402,10 @@ func (c *RoomClient) getRoomEventData() {
 	}
 
 	// send variable sync request for vending machine expeditions
-	if c.room.id != currentEventVmMapId {
+	if config.gameName != currentEventVmGame || c.room.id != currentEventVmMapId {
 		return
 	}
-
-	if mapVmGroups, hasVms := gameEventVms[config.gameName]; hasVms {
-		if vmGroups, hasMapVms := mapVmGroups[c.room.id]; hasMapVms {
-			for _, vmGroup := range vmGroups {
-				if !slices.Equal(vmGroup, currentEventVmGroup) {
-					continue
-				}
-				for _, eventId := range vmGroup {
-					c.outbox <- buildMsg("sev", eventId, 1)
-				}
-			}
-		}
+	for _, eventId := range currentEventVmGroup {
+		c.outbox <- buildMsg("sev", eventId, 1)
 	}
 }

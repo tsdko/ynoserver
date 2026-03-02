@@ -420,22 +420,10 @@ func (c *RoomClient) checkCondition(condition *Condition, roomId int, minigames 
 
 					var eventTriggerType int
 					if condition.Trigger == "eventAction" {
-						eventVms, hasGameVms := gameEventVms[config.gameName]
-						if hasGameVms && config.gameName == currentEventVmGame && roomId > 0 && roomId == currentEventVmMapId {
-							if vmGroups, hasVms := eventVms[roomId]; hasVms {
-								var skipEvSync bool
-								for _, vmGroup := range vmGroups {
-									if !slices.Equal(vmGroup, currentEventVmGroup) {
-										continue
-									}
-									if slices.Contains(vmGroup, valueInt) {
-										skipEvSync = true
-										break
-									}
-								}
-								if skipEvSync {
-									continue
-								}
+						if config.gameName == currentEventVmGame && roomId > 0 && roomId == currentEventVmMapId {
+
+							if slices.Contains(currentEventVmGroup, valueInt) {
+								continue
 							}
 						}
 
