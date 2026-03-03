@@ -21,7 +21,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -558,11 +557,7 @@ func handleVm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var eventFragments []string
-	for _, eventVm := range vmGroup {
-		eventFragments = append(eventFragments, fmt.Sprintf("%04d", eventVm))
-	}
-	fileBytes, err := os.ReadFile(fmt.Sprintf("vms/%s/Map%04d_EV%s.png", gameId, mapId, strings.Join(eventFragments, ",")))
+	fileBytes, err := os.ReadFile(eventVmPath(gameId, mapId, vmGroup))
 	if err != nil {
 		handleInternalError(w, r, err)
 		return
@@ -1557,8 +1552,8 @@ func query2kki(action string, queryString string) (response string, err error) {
 	return response, nil
 }
 
-func queryWiki(action string, queryString string) (response string, err error) {
-	err = db.QueryRow("SELECT response FROM wikiApiQueries WHERE game = ? AND action = ? AND query = ? AND NOW() < timestampExpired", config.gameName, action, queryString).Scan(&response)
+func queryWiki(game string, action string, queryString string) (response string, err error) {
+	err = db.QueryRow("SELECT response FROM wikiApiQueries WHERE game = ? AND action = ? AND query = ? AND NOW() < timestampExpired", game, action, queryString).Scan(&response)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			return "", err

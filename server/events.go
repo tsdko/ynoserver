@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,22 @@ type EventLocationData struct {
 // A group of VMs that logically belong together
 type EventIds []int
 
+type WikiVmData struct {
+	Game     string   `json:"game"`
+	Path     string   `json:"path"`
+	MapId    string   `json:"mapId"`
+	EventIds []string `json:"eventIds"`
+}
+
+func (v *WikiVmData) name() string {
+	return fmt.Sprintf("VM[%s, Map%s, EV%s]", v.Game, v.MapId, strings.Join(v.EventIds, ","))
+}
+
+type VmData struct {
+	EventIds EventIds
+	ImageURL string
+}
+
 const (
 	dailyEventLocationMinDepth = 2
 	dailyEventLocationMaxDepth = 3
@@ -148,7 +165,7 @@ var (
 	gameWeekendEventLocationPools map[string][]*EventLocationData
 	freeEventLocationPool         []*EventLocationData
 
-	gameEventVms map[string]map[int][]EventIds
+	gameEventVms map[string]map[int][]VmData
 
 	// in 2kki, only used for cache bookkeeping
 	gameEventLocations map[string][]*EventLocationData = make(map[string][]*EventLocationData)
@@ -513,7 +530,7 @@ func addEventVm() {
 	}
 
 	mapId := mapIds[rand.Intn(len(mapIds))]
-	vmGroup := eventVms[mapId][rand.Intn(len(eventVms[mapId]))]
+	vmGroup := eventVms[mapId][rand.Intn(len(eventVms[mapId]))].EventIds
 
 	err = writeEventVmData(gameId, mapId, vmGroup, eventVmExp)
 	if err == nil {
@@ -536,67 +553,110 @@ func handleEventError(eventType int, payload string) {
 	writeErrLog("SERVER", strconv.Itoa(eventType), payload)
 }
 
-func setEventVms() {
-	logUpdateTask("event VMs")
+func eventVmPath(game string, mapId int, eventIds EventIds) string {
+	var eventFragments []string
+	for _, eventVm := range eventIds {
+		eventFragments = append(eventFragments, fmt.Sprintf("%04d", eventVm))
+	}
+	return fmt.Sprintf("vms/%s/Map%04d_EV%s.png", strings.Join(eventFragments, ","))
+}
 
-	gamesVmDirs, err := os.ReadDir("vms/")
+func downloadEventVmImage(game string, mapId int, vmData VmData) error {
+	path := eventVmPath(game, mapId, vmData.EventIds)
+	err := os.MkdirAll(filepath.Dir(path), 0755)
 	if err != nil {
+		return err
+	}
+
+	r, err := http.Get(vmData.ImageURL)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+
+	tempPath := path + ".dl"
+	f, err := os.Create(tempPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = io.Copy(f, r.Body)
+	if err != nil {
+		return err
+	}
+
+	return os.Rename(tempPath, path)
+}
+
+func setEventVms() {
+	if !isMainServer {
 		return
 	}
 
-	gameEventVms = make(map[string]map[int][]EventIds)
+	logUpdateTask("event VMs")
 
-	for _, gameVmDir := range gamesVmDirs {
-		game := gameVmDir.Name()
-		if _, has := gameIdToName[game]; !has || !gameVmDir.IsDir() {
-			eprintf("VM", "Ignoring %s", game)
+	// XXX should probably be configured somewhere else
+	eventVmGames := make([]string, 0, len(gameIdToName))
+	for game := range gameIdToName {
+		if game == "unconscious" {
+			continue
+		}
+		eventVmGames = append(eventVmGames, game)
+	}
+
+	gameEventVms = make(map[string]map[int][]VmData)
+	for _, game := range eventVmGames {
+		sr, err := queryWiki(game, "vms", "")
+		if err != nil {
+			eprintf("VM", "Could not get VM data for %s: %v", game, err)
 			continue
 		}
 
-		vmDir, err := os.ReadDir("vms/" + game)
+		var vms []WikiVmData
+		err = json.Unmarshal([]byte(sr), &vms)
 		if err != nil {
-			eprintf("VM", "Could not read VMs for %s: %s", game, err)
-			return
+			eprintf("VM", "Could not unmarshal VM data for %s: %v", game, err)
+			continue
 		}
 
-		gameEventVms[game] = make(map[int][]EventIds)
-		for _, vmFile := range vmDir {
+		gameEventVms[game] = make(map[int][]VmData)
+		for _, vm := range vms {
 			var (
 				eventIds []int
 				eventId  int
 			)
 
-			vmName := vmFile.Name()
-			mapId, vmErr := strconv.Atoi(vmName[3:7])
-			if vmErr != nil {
-				eprintf("VM", "%s does not match `Mapxxxx_EVxxxx.png`", vmName)
+			mapId, vmErr := strconv.Atoi(vm.MapId)
+			if err != nil {
+				eprintf("VM", "%s: parse map id: %v", vm.name(), err)
 				continue
 			}
 
-			vmBaseName := strings.TrimSuffix(vmName[10:], ".png")
-			eventIdCsv := strings.Split(vmBaseName, ",")
-			for _, eventIdRaw := range eventIdCsv {
+			eventIds = make([]int, 0, len(vm.EventIds))
+			for _, eventIdRaw := range vm.EventIds {
 				if len(eventIdRaw) != 4 {
-					eprintf("VM", "%s must all have 4-padded events", vmName)
+					eprintf("VM", "%s must all have 4-padded events", vm.name())
 					eventIds = nil
 					break
 				}
 				eventId, vmErr = strconv.Atoi(eventIdRaw)
 				if vmErr != nil {
-					break
+					eprintf("VM", "%s: parse event id %q: %v", vm.name(), eventIdRaw, err)
+					continue
 				}
 				eventIds = append(eventIds, eventId)
 			}
 			if vmErr != nil {
 				return
 			}
-
-			if eventIds == nil {
-				eprintf("VM", "%s has no events", vmName)
+			if len(eventIds) == 0 {
+				eprintf("VM", "%s has no events", vm.name())
 				continue
 			}
 
-			gameEventVms[game][mapId] = append(gameEventVms[game][mapId], eventIds)
+			vmData := VmData{EventIds: eventIds, ImageURL: vm.Path}
+			gameEventVms[game][mapId] = append(gameEventVms[game][mapId], vmData)
 		}
 	}
 }
